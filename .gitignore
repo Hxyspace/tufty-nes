@@ -1,0 +1,11 @@
+/lib/
+/build/
+/dist/
+/roms/*
+!/roms/README.md
+/.development/
+*.[nN][eE][sS]
+__pycache__/
+*.py[cod]
+*.bak
+.DS_Store

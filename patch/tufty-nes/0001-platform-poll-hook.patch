@@ -1,0 +1,16 @@
+diff --git a/pico-nes/infones/InfoNES_System.h b/pico-nes/infones/InfoNES_System.h
+--- a/pico-nes/infones/InfoNES_System.h
++++ b/pico-nes/infones/InfoNES_System.h
+@@ -57,7 +57,12 @@
+ void InfoNES_DebugPrint(const char *pszMsg);
+ 
+ /* Wait */
++#ifdef INFONES_PLATFORM_POLL
++void INFONES_PLATFORM_POLL();
++inline void InfoNES_Wait() { INFONES_PLATFORM_POLL(); }
++#else
+ inline void InfoNES_Wait() {}
++#endif
+ 
+ /* Sound Initialize */
+ void InfoNES_SoundInit(void);

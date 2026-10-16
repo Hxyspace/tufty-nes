@@ -1,0 +1,41 @@
+cmake_minimum_required(VERSION 3.16)
+project(tufty_nes_tests C CXX)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+execute_process(COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_LIST_DIR}/../tools/deps.py" --profile host --check
+  RESULT_VARIABLE deps_result OUTPUT_VARIABLE deps_output ERROR_VARIABLE deps_error)
+if(NOT deps_result EQUAL 0)
+  message(FATAL_ERROR "Dependency validation failed:\n${deps_output}${deps_error}")
+endif()
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
+enable_testing()
+set(root ${CMAKE_CURRENT_LIST_DIR}/..)
+set(runtime ${root}/src)
+set(upstream ${root}/lib/tufty-nes/pico-nes)
+add_compile_definitions(TUFTY_HOST_PREVIEW
+  LFS_NO_MALLOC LFS_NO_DEBUG LFS_NO_WARN LFS_NO_ERROR cJSON_NESTING_LIMIT=8
+  TUFTY_FATFS_CONFIG="tufty_ffconf.h")
+add_compile_options(-Wall -Wextra -Wno-unused-parameter -UNDEBUG)
+option(SANITIZERS "Enable address/undefined behavior checks" ON)
+if(SANITIZERS)
+  add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer -fno-pie)
+  add_link_options(-fsanitize=address,undefined -no-pie)
+endif()
+include_directories(${runtime} ${root}/config ${upstream}/drivers/fatfs
+  ${root}/lib/littlefs ${root}/lib/cjson ${CMAKE_CURRENT_LIST_DIR}/stubs)
+add_executable(protocol_tests protocol_tests.cpp ${runtime}/protocol.cpp)
+add_test(NAME protocol COMMAND protocol_tests)
+add_executable(console_tests console_tests.cpp)
+add_test(NAME console COMMAND console_tests)
+add_executable(storage_tests storage_tests.cpp ${runtime}/storage.cpp ${runtime}/fat_disk.cpp
+  ${runtime}/rom_store.cpp ${runtime}/menu.cpp
+  ${upstream}/drivers/fatfs/ff.c ${upstream}/drivers/fatfs/ffunicode.c
+  ${root}/lib/littlefs/lfs.c ${root}/lib/littlefs/lfs_util.c
+  ${root}/lib/cjson/cJSON.c)
+add_test(NAME storage_4096 COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/storage_fixture.py $<TARGET_FILE:storage_tests> 4096)
+add_test(NAME storage_512 COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/storage_fixture.py $<TARGET_FILE:storage_tests> 512)
+add_test(NAME state_blank COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/storage_fixture.py $<TARGET_FILE:storage_tests> 4096 blank)
+add_test(NAME state_corrupt_record COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/storage_fixture.py $<TARGET_FILE:storage_tests> 4096 corrupt)
+add_test(NAME host_sender COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_sender.py)
+add_test(NAME rom_preparation COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_roms.py)
+add_test(NAME dependencies COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_deps.py)

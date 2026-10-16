@@ -1,0 +1,23 @@
+# 来源与许可
+
+本项目采用 [GPL-3.0](LICENSE)。依赖的固定版本记录在 `deps.lock.json`，适配补丁位于 `patch/`。以下组件和素材保留各自版权与许可证。
+
+| 内容 | 来源 | 本项目使用方式 |
+|---|---|---|
+| InfoNES、NES mapper、FatFs R0.14b | [lalomorales22/tufty-nes](https://github.com/lalomorales22/tufty-nes)，基于 xrip/pico-nes、InfoNES | 锁定 `799ecf25022d5216773c8b80fcf995950aa70f4e`，仅两个接入补丁；上游 `pico-nes/LICENSE` 及 FatFs 源码内声明保留 |
+| Pico SDK 2.3.0、TinyUSB | Raspberry Pi、TinyUSB 作者 | 锁文件下载；TinyUSB 由 SDK 的 gitlink 定版，按各自 BSD/MIT 许可分发 |
+| picotool | Raspberry Pi | 锁文件下载，BSD-3-Clause，作为宿主构建工具 |
+| LittleFS 2.11.3 | littlefs-project | 锁文件下载，BSD-3-Clause |
+| cJSON 1.7.19 | Dave Gamble 等 | 锁文件下载，MIT |
+| RM1 ROMFS 解析、文件系统布局、独占 MSC、Reset 入口 | `tufty2350-native/src/storage/`、USB 实现 | `src/rom_store.*`、存储/USB 设计；MIT 声明见 `licenses/LICENSE` |
+| ST7789 初始化和 PIO 并口驱动 | native，经 Pimoroni badgeware-cpp，参考提交 `7d1ef0882c6e9dcf374542528f6f211e287b5afb` | 改写为双核 DMA 显示；见 `licenses/PIMORONI-LICENSE` |
+| Tufty Reset 设计 | Pimoroni Tufty，参考提交 `ee84772fb7f7d5424e9593029caba815c6f89c80`，经 native | USB Reset 设计，Pimoroni MIT 许可同上 |
+| Console 交互 | native 的 rtc_console、rtc_platform | 原生实现回显/换行/退格，参考工程 MIT 许可同上 |
+| TGP v1 与菜单设计、背景 | `TUFTY_yuan/lib/tufty_runtime/gamepad/`、`office/apps/menu/`、`office/assets/background.png` | 原生重写；TGP v2 为本项目增加，背景来自该项目素材 |
+| Lato Regular/Heavy/Bold ASCII 字形 | Łukasz Dziedzic | 生成菜单位图，SIL OFL 1.1，见 `licenses/LATO-LICENSE` |
+
+`tools/rom_fixes.json` 记录从 [FCEUX ines-correct.h](https://github.com/TASEmulators/fceux/blob/master/src/ines-correct.h) 核对的部分 CRC32/mapper/镜像事实，未引入 FCEUX 程序代码或完整数据库。Rainbow Islands 规则增加了 PRG/CHR 数据的 SHA256 和长度约束。ROM 文件不随项目或固件分发。
+
+CYW43/BTstack 为可选源码依赖，版本由 SDK gitlink 锁定，当前未链接到固件。启用和发布时须一并收录实际使用库的许可文件及平台授权条款。
+
+`tools/package.py` 将当前固件实际依赖的许可证和源码版本信息复制到 `dist/`；依赖完整来源在 `deps.lock.json`，对上游的修改在 `patch/`。
