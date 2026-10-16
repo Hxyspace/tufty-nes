@@ -76,6 +76,8 @@ python3 tools/serial_gamepad.py --port /dev/ttyACM1 --buttons 0x80 --seconds 3
 
 通过 Console 的 `usb disk` 或连续双 Reset 进入磁盘模式，把游戏放到盘根目录 `roms/`。完成后使用电脑的安全弹出操作，设备自动返回菜单。磁盘模式下暂停游戏、手柄和 Console 命令。
 
+磁盘界面显示星空和操作提示。开始写入时先显示一帧 `Transferring data!`，随后冻结画面、四颗背灯常亮；最后一次写入完成 500 ms 后切回 `Waiting for data` 并熄灯。读取文件、扫描目录只暂停动画，不触发传输状态或亮灯，也不延长写入指示；读写都停止 500 ms 后恢复动画。电脑后台写入磁盘元数据也会触发写入指示。即使背灯已熄灭，也应先在电脑上安全弹出磁盘。
+
 游戏文件要求：
 
 - 标准 iNES 1.0 `.nes` 文件，单个文件最多 4 MiB。

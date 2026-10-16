@@ -14,6 +14,8 @@
 | Tufty Reset 设计 | Pimoroni Tufty，参考提交 `ee84772fb7f7d5424e9593029caba815c6f89c80`，经 native | USB Reset 设计，Pimoroni MIT 许可同上 |
 | 深度休眠、唤醒与长按 Reset 动画 | `tufty2350-native/src/platform/tufty/{powman,reset_startup}.cpp`，基于 Pimoroni Tufty POWMAN 实现 | `src/power_board.*`、`src/power_reset.cpp`；MIT 许可见 `licenses/LICENSE` 和 `licenses/PIMORONI-LICENSE` |
 | Console 交互 | native 的 rtc_console、rtc_platform | 原生实现回显/换行/退格，参考工程 MIT 许可同上 |
+| USB 磁盘界面、星空及背灯交互 | Pimoroni `tufty2350/modules/python/_msc.py`，参考提交 `c4abbcd32fef7aa12985635d68daed967b04f594` | `src/disk_ui.cpp` 原生适配，NES 专用文案；Pimoroni MIT 声明同上 |
+| Ark 6 / Absolute 10 像素字体 | 同一 Tufty 源码的 `romfs/fonts/{ark,absolute}.ppf` | `src/disk_fonts.hpp` 保存 ASCII 字形，生成脚本保留源文件 SHA256 |
 | TGP v1 与菜单设计、背景 | `TUFTY_yuan/lib/tufty_runtime/gamepad/`、`office/apps/menu/`、`office/assets/background.png` | 原生重写；TGP v2 为本项目增加，背景来自该项目素材 |
 | Lato Regular/Heavy/Bold ASCII 字形 | Łukasz Dziedzic | 生成菜单位图，SIL OFL 1.1，见 `licenses/LATO-LICENSE` |
 

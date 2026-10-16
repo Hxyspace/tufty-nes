@@ -130,15 +130,4 @@ void draw(uint16_t *out,int selected,float position,uint32_t elapsed,const char 
     text(out,label,(320-text_width(label,art::body_glyphs))/2,220,orange);
     if(elapsed<250) for(int i=0;i<320*240;++i) out[i]=blend(0,out[i],elapsed*255/250);
 }
-void disk(uint16_t *out,bool valid) {
-    std::fill(out,out+320*40,0);
-    std::memcpy(out+320*40,art::background,320*200*2);
-    text(out,"TUFTY",14,8,0xffff,art::header_glyphs,art::header_pixels);
-    box(out,80,9,1,23,rgb(78,78,78));
-    text(out,"NES",92,8,rgb(0,193,222),art::header_glyphs,art::header_pixels);
-    title(out,"USB system disk",24,64);
-    text(out,valid?"Copy .nes files into the roms folder.":"The existing FAT volume is invalid.",24,121,rgb(163,168,174));
-    text(out,valid?"Safely eject to return to the library.":"No formatting has been performed.",24,143,rgb(163,168,174));
-    text(out,"Console + Gamepad + System disk",24,199,rgb(255,174,45));
-}
 }

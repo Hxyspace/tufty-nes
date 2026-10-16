@@ -32,6 +32,11 @@ add_test(NAME power COMMAND power_tests)
 add_executable(power_platform_tests power_platform_tests.cpp ${runtime}/power.cpp)
 target_compile_definitions(power_platform_tests PRIVATE BTN_A=7 BTN_B=9 BTN_C=10 BTN_UP=11 BTN_DOWN=6)
 add_test(NAME power_platform COMMAND power_platform_tests)
+add_executable(disk_ui_tests disk_ui_tests.cpp ${runtime}/disk_ui.cpp)
+add_test(NAME disk_ui COMMAND disk_ui_tests)
+add_executable(usb_disk_tests usb_disk_tests.cpp ${runtime}/usb.cpp ${runtime}/protocol.cpp ${runtime}/fat_disk.cpp)
+target_include_directories(usb_disk_tests BEFORE PRIVATE ${CMAKE_CURRENT_LIST_DIR}/usb_stubs)
+add_test(NAME usb_disk COMMAND usb_disk_tests)
 add_executable(storage_tests storage_tests.cpp ${runtime}/storage.cpp ${runtime}/fat_disk.cpp
   ${runtime}/rom_store.cpp ${runtime}/menu.cpp
   ${upstream}/drivers/fatfs/ff.c ${upstream}/drivers/fatfs/ffunicode.c

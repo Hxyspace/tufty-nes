@@ -70,7 +70,7 @@ sudo apt install dosfstools mtools
 ./tools/test.sh
 ```
 
-主机测试覆盖手柄协议、Console、菜单休眠计时与休眠请求、512/4096 字节 FAT、配置保存与错误处理、ROM 修复、UF2 检查，以及依赖补丁与本地修改保护。C/C++ 测试启用 ASan/UBSan，使用临时文件系统镜像。实际低功耗状态和物理唤醒需在设备上验证。
+主机测试覆盖手柄协议、Console、菜单休眠计时与休眠请求、USB 磁盘界面与传输状态、512/4096 字节 FAT、配置保存与错误处理、ROM 修复、UF2 检查，以及依赖补丁与本地修改保护。C/C++ 测试启用 ASan/UBSan，使用临时文件系统镜像。实际低功耗状态和物理唤醒需在设备上验证。
 
 ## 项目结构
 
@@ -92,4 +92,10 @@ roms/       本地游戏，不提交
 
 ```bash
 python3 tools/generate_menu_assets.py --reference /path/to/TUFTY_yuan
+```
+
+磁盘界面的 ASCII 像素字体来自 Pimoroni `tufty2350` 的 Ark/Absolute 字体，已生成并纳入源码。重生成：
+
+```bash
+python3 tools/generate_disk_fonts.py --reference /path/to/tufty2350
 ```

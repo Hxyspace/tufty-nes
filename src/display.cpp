@@ -21,6 +21,7 @@ uint16_t *menu_buffers[2]={menus[0],menus[1]};
 uint16_t palette[64]{};
 static std::atomic<unsigned> requested{1}, completed{0};
 static std::atomic<bool> ready{false}, pause_request{false}, pause_ack{false};
+static std::atomic<bool> disk_hold{false};
 static PIO pio=pio1;
 static uint sm, dma;
 // Only core0 publishes brightness. Keep the panel dark until its first UI frame.
@@ -122,7 +123,7 @@ static void core() {
             pause_ack.store(false,std::memory_order_release);
         }
         uint32_t now=time_us_32();
-        if(now-previous>=16667) {
+        if(!disk_hold.load(std::memory_order_acquire) && now-previous>=16667) {
             previous=now;
             unsigned id=requested.load(std::memory_order_acquire);
             frame(id); completed.store(id,std::memory_order_release);
@@ -138,6 +139,16 @@ void start() {
 void present_menu(unsigned index) {
     unsigned id=1+(index&1); requested.store(id,std::memory_order_release);
     while(completed.load(std::memory_order_acquire)!=id) {tufty_service(); sleep_ms(1);}
+    if(!visible) {visible=true; set_backlight(desired_brightness);}
+}
+bool disk_ready() {
+    return completed.load(std::memory_order_acquire)==requested.load(std::memory_order_acquire);
+}
+void hold_disk(bool enabled) {disk_hold.store(enabled,std::memory_order_release);}
+void present_disk(unsigned index) {
+    // Caller owns the other buffer after disk_ready(). Core1 handles the
+    // transfer while core0 immediately returns to servicing USB requests.
+    requested.store(1+(index&1),std::memory_order_release);
     if(!visible) {visible=true; set_backlight(desired_brightness);}
 }
 void present_game(const uint8_t *screen) {

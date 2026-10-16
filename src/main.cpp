@@ -121,9 +121,7 @@ int main() {
     usb::pad.id=storage::config.controller;
     display::brightness(storage::config.brightness);
     if(disk) {
-        bool valid=storage::mounted();
-        menu::disk(display::menu_buffers[1],valid);
-        display::present_menu(1); usb::acquire_disk(valid); usb::run_disk();
+        usb::acquire_disk(storage::mounted()); usb::run_disk();
     }
     storage::scan(); menu::load_art();
     int selected=0;

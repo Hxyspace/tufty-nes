@@ -7,6 +7,11 @@ extern uint16_t palette[64];
 void early_init();
 void start();
 void present_menu(unsigned index);
+// Alternate buffers only after the previous frame completes. Animation frames
+// publish asynchronously; status transitions finish once before holding frames.
+bool disk_ready();
+void present_disk(unsigned index);
+void hold_disk(bool enabled);
 void present_game(const uint8_t *screen);
 void pause(bool enabled);
 bool paused();
