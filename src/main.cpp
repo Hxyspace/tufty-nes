@@ -5,6 +5,7 @@
 #include "usb.hpp"
 #include "menu.hpp"
 #include "ines.hpp"
+#include "power.hpp"
 #include "InfoNES.h"
 #include "InfoNES_System.h"
 #include "InfoNES_Mapper.h"
@@ -68,7 +69,7 @@ void InfoNES_PadState(DWORD *p1,DWORD *p2,DWORD *system) {
     uint8_t keys=local_game()|usb::pad.buttons;
     if(storage::config.swap_ab) keys=(keys&~3)|((keys&1)<<1)|((keys&2)>>1);
     *p1=keys; *p2=0;
-    *system=(!gpio_get(BTN_HOME) || usb::pad.menu || usb::disk_requested || usb::rescan_requested)?PAD_SYS_QUIT:0;
+    *system=(!gpio_get(BTN_HOME) || usb::pad.menu || usb::disk_requested || usb::rescan_requested || power::pending())?PAD_SYS_QUIT:0;
 }
 void InfoNES_SoundInit() {}
 int InfoNES_SoundOpen(int,int) {return 0;}
@@ -103,14 +104,15 @@ static void flush_config() {
 }
 int main() {
     display::early_init();
-    for(uint pin : {uint(BTN_A),uint(BTN_B),uint(BTN_C),uint(BTN_UP),uint(BTN_DOWN),uint(BTN_HOME),14u}) {
+    power::init();
+    for(uint pin : {uint(BTN_A),uint(BTN_B),uint(BTN_C),uint(BTN_UP),uint(BTN_DOWN),uint(BTN_HOME),uint(BW_RESET_SW)}) {
         gpio_init(pin); gpio_set_dir(pin,GPIO_IN); gpio_pull_up(pin);
     }
-    gpio_init(41); gpio_set_dir(41,GPIO_OUT); gpio_put(41,1);
-    gpio_init(23); gpio_set_dir(23,GPIO_OUT); gpio_put(23,0);
+    gpio_init(BW_SW_POWER_EN); gpio_set_dir(BW_SW_POWER_EN,GPIO_OUT); gpio_put(BW_SW_POWER_EN,1);
+    gpio_init(CYW43_DEFAULT_PIN_WL_REG_ON); gpio_set_dir(CYW43_DEFAULT_PIN_WL_REG_ON,GPIO_OUT); gpio_put(CYW43_DEFAULT_PIN_WL_REG_ON,0);
     for(uint pin=0;pin<4;++pin) {gpio_init(pin); gpio_set_dir(pin,GPIO_OUT); gpio_put(pin,0);}
     bool disk=usb::consume_disk_request();
-    disk=usb::double_reset() || disk;
+    disk=power::reset_startup() || disk;
     usb::init(disk); usb_ready=true;
     if(psram_get_size()<5*1024*1024) panic("8 MiB PSRAM required");
     display::start();
@@ -131,6 +133,7 @@ int main() {
     uint32_t opened=to_ms_since_boot(get_absolute_time());
     uint16_t previous=menu_buttons();
     bool suppress=true;
+    power::menu(true);
     while(true) {
         tufty_service();
         if(usb::disk_requested) {
@@ -138,12 +141,15 @@ int main() {
             if(usb::dirty) {usb::disk_requested=false; std::printf("Disk entry blocked: unsaved State\n");}
             else usb::reboot_disk();
         }
+        if(power::pending()) power::process();
         if(usb::save_requested) flush_config();
         if(usb::rescan_requested) {
             usb::rescan_requested=false; storage::scan(); menu::cover(-1);
             selected=storage::count?std::min<int>(selected,storage::count-1):0; position=selected;
         }
         uint16_t keys=menu_buttons();
+        power::idle(keys || !gpio_get(BTN_HOME) || usb::pad.menu);
+        if(power::pending()) {power::process(); continue;}
         if(!keys && gpio_get(BTN_HOME)) suppress=false;
         uint16_t pressed=suppress?0:keys&~previous; previous=keys;
         if(pressed&(tgp::Left|tgp::Up)) selected=std::max(0,selected-1);
@@ -151,6 +157,7 @@ int main() {
         if(storage::count && (pressed&(tgp::Left|tgp::Right|tgp::Up|tgp::Down))) storage::error[0]=0;
         usb::pad.menu=false;
         if(pressed&tgp::A && storage::count) {
+            power::menu(false);
             storage::error[0]=0;
             if(storage::load(selected,rom_data,rom_bytes)) {
                 if(std::strcmp(storage::config.last_rom,storage::entries[selected].name)) {
@@ -160,6 +167,7 @@ int main() {
                 InfoNES_Main(true);
             }
             usb::pad.menu=false; suppress=true; previous=menu_buttons();
+            power::menu(true);
             opened=to_ms_since_boot(get_absolute_time());
         }
         menu::cover(selected);

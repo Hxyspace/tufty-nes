@@ -36,7 +36,7 @@ static int prog_lfs(const lfs_config *,lfs_block_t b,lfs_off_t at,const void *p,
 }
 static int erase_lfs(const lfs_config *,lfs_block_t b) {flash_range_erase(kState.offset+b*4096,4096); return 0;}
 static int sync_lfs(const lfs_config *) {return 0;}
-static void fixture_state(bool corrupt) {
+static void fixture_state(bool corrupt,const char *idle=nullptr) {
     lfs_config cfg{}; uint8_t r[256],p[256],look[32],fbuf[256];
     cfg.read=read_lfs; cfg.prog=prog_lfs; cfg.erase=erase_lfs; cfg.sync=sync_lfs;
     cfg.read_size=cfg.prog_size=cfg.cache_size=256; cfg.block_size=4096;
@@ -51,8 +51,9 @@ static void fixture_state(bool corrupt) {
     assert(lfs_file_close(&fs,&f)==0);
     f={};
     assert(lfs_file_opencfg(&fs,&f,"/state/nes.json",LFS_O_WRONLY|LFS_O_CREAT,&fc)==0);
-    const char *nes=corrupt?"{broken":"{\"controller_id\":23,\"brightness\":67,\"swap_ab\":true,\"last_rom\":\"Sample Game.nes\"}";
-    assert(lfs_file_write(&fs,&f,nes,std::strlen(nes))==static_cast<lfs_ssize_t>(std::strlen(nes)));
+    std::string nes=corrupt?"{broken":"{\"controller_id\":23,\"brightness\":67,\"swap_ab\":true,\"last_rom\":\"Sample Game.nes\"}";
+    if(idle) {nes.pop_back(); nes+=",\"menu_sleep_seconds\":"; nes+=idle; nes+='}';}
+    assert(lfs_file_write(&fs,&f,nes.data(),nes.size())==static_cast<lfs_ssize_t>(nes.size()));
     assert(lfs_file_close(&fs,&f)==0); assert(lfs_unmount(&fs)==0);
 }
 int main(int argc,char **argv) {
@@ -66,8 +67,10 @@ int main(int argc,char **argv) {
     std::vector<uint8_t> original(flash,flash+16*1024*1024);
     bool blank=argc==4 && std::string(argv[3])=="blank";
     bool corrupt=argc==4 && std::string(argv[3])=="corrupt";
-    if(!blank) fixture_state(corrupt);
-    if(blank || corrupt) {
+    bool idle_off=argc==4 && std::string(argv[3])=="idle_off";
+    bool bad_idle=argc==4 && std::string(argv[3])=="bad_idle";
+    if(!blank) fixture_state(corrupt,idle_off?"0":bad_idle?"86401":nullptr);
+    if(blank || corrupt || bad_idle) {
         std::vector<uint8_t> before(flash,flash+16*1024*1024);
         storage::init(); assert(storage::mounted() && !storage::state_ready());
         assert(!storage::save());
@@ -77,6 +80,7 @@ int main(int argc,char **argv) {
     storage::init(); assert(storage::mounted() && storage::state_ready());
     assert(storage::config.controller==23 && storage::config.brightness==67 && storage::config.swap_ab);
     assert(std::string(storage::config.last_rom)=="Sample Game.nes");
+    assert(storage::config.menu_sleep_seconds==(idle_off?0u:300u)); // Old/default and disabled settings.
     assert(flashfat::disk.sector_size==std::stoi(argv[2]));
     storage::scan(); assert(storage::count==2);
     bool unicode=false;
@@ -86,11 +90,13 @@ int main(int argc,char **argv) {
     assert(storage::load(0,data,bytes) && bytes==16400);
     ines::Image image; assert(ines::inspect(data,bytes,image));
     storage::config.controller=65535; storage::config.brightness=35; storage::config.swap_ab=true;
+    storage::config.menu_sleep_seconds=0;
     std::strcpy(storage::config.last_rom,"测试.nes");
     assert(storage::save());
     char text[1024]; size_t actual;
     assert(storage::read_file("/state/nes.json",text,sizeof(text)-1,actual)); text[actual]=0;
     assert(std::strstr(text,"65535") && std::strstr(text,"测试.nes"));
+    assert(std::strstr(text,"\"menu_sleep_seconds\":0"));
     assert(storage::read_file("/state/settings.json",text,sizeof(text)-1,actual)); text[actual]=0;
     assert(std::string(text)=="{\"brightness\":42}");
     assert(!storage::read_file("/system/../state/settings.json",text,sizeof(text),actual));

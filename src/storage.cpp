@@ -81,15 +81,18 @@ static void load_config() {
     auto *level=cJSON_GetObjectItemCaseSensitive(root,"brightness");
     auto *swap=cJSON_GetObjectItemCaseSensitive(root,"swap_ab");
     auto *last=cJSON_GetObjectItemCaseSensitive(root,"last_rom");
+    auto *idle=cJSON_GetObjectItemCaseSensitive(root,"menu_sleep_seconds");
     if((id && (!cJSON_IsNumber(id) || id->valuedouble!=id->valueint || id->valueint<1 || id->valueint>65535)) ||
        (level && (!cJSON_IsNumber(level) || level->valuedouble!=level->valueint || level->valueint<1 || level->valueint>100)) ||
-       (swap && !cJSON_IsBool(swap)) || (last && (!cJSON_IsString(last) || std::strlen(last->valuestring)>255))) {
+       (swap && !cJSON_IsBool(swap)) || (last && (!cJSON_IsString(last) || std::strlen(last->valuestring)>255)) ||
+       (idle && (!cJSON_IsNumber(idle) || idle->valuedouble!=idle->valueint || idle->valueint<0 || idle->valueint>86400))) {
         writable_config=false; cJSON_Delete(root); return;
     }
     if(id) config.controller=id->valueint;
     if(level) config.brightness=level->valueint;
     if(swap) config.swap_ab=cJSON_IsTrue(swap);
     if(last) std::snprintf(config.last_rom,sizeof(config.last_rom),"%s",last->valuestring);
+    if(idle) config.menu_sleep_seconds=idle->valueint;
     cJSON_Delete(root);
 }
 void init(bool use_state) {
@@ -180,6 +183,7 @@ bool save() {
     bool ok=cJSON_AddNumberToObject(root,"controller_id",config.controller) &&
         cJSON_AddNumberToObject(root,"brightness",config.brightness) &&
         cJSON_AddBoolToObject(root,"swap_ab",config.swap_ab) &&
+        cJSON_AddNumberToObject(root,"menu_sleep_seconds",config.menu_sleep_seconds) &&
         cJSON_AddStringToObject(root,"last_rom",config.last_rom);
     char *json=ok?cJSON_PrintUnformatted(root):nullptr; cJSON_Delete(root);
     if(!json) return false;

@@ -27,6 +27,11 @@ add_executable(protocol_tests protocol_tests.cpp ${runtime}/protocol.cpp)
 add_test(NAME protocol COMMAND protocol_tests)
 add_executable(console_tests console_tests.cpp)
 add_test(NAME console COMMAND console_tests)
+add_executable(power_tests power_tests.cpp)
+add_test(NAME power COMMAND power_tests)
+add_executable(power_platform_tests power_platform_tests.cpp ${runtime}/power.cpp)
+target_compile_definitions(power_platform_tests PRIVATE BTN_A=7 BTN_B=9 BTN_C=10 BTN_UP=11 BTN_DOWN=6)
+add_test(NAME power_platform COMMAND power_platform_tests)
 add_executable(storage_tests storage_tests.cpp ${runtime}/storage.cpp ${runtime}/fat_disk.cpp
   ${runtime}/rom_store.cpp ${runtime}/menu.cpp
   ${upstream}/drivers/fatfs/ff.c ${upstream}/drivers/fatfs/ffunicode.c
@@ -36,6 +41,8 @@ add_test(NAME storage_4096 COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST
 add_test(NAME storage_512 COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/storage_fixture.py $<TARGET_FILE:storage_tests> 512)
 add_test(NAME state_blank COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/storage_fixture.py $<TARGET_FILE:storage_tests> 4096 blank)
 add_test(NAME state_corrupt_record COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/storage_fixture.py $<TARGET_FILE:storage_tests> 4096 corrupt)
+add_test(NAME state_idle_disabled COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/storage_fixture.py $<TARGET_FILE:storage_tests> 4096 idle_off)
+add_test(NAME state_invalid_idle COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/storage_fixture.py $<TARGET_FILE:storage_tests> 4096 bad_idle)
 add_test(NAME host_sender COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_sender.py)
 add_test(NAME rom_preparation COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_roms.py)
 add_test(NAME dependencies COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_deps.py)

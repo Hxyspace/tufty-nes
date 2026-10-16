@@ -82,6 +82,22 @@ pico_board_cmake_set_default(PICO_RP2350_A2_SUPPORTED, 1)
 #define BTN_DOWN       6
 #define BTN_HOME       22
 
+// Shared action-key interrupt and always-on wake circuitry.
+#define BW_SWITCH_A    BTN_A
+#define BW_SWITCH_B    BTN_B
+#define BW_SWITCH_C    BTN_C
+#define BW_SWITCH_UP   BTN_UP
+#define BW_SWITCH_DOWN BTN_DOWN
+#define BW_SWITCH_HOME BTN_HOME
+#define BW_RESET_SW    14
+#define BW_VBUS_DETECT 12
+#define BW_RTC_ALARM   13
+#define BW_SWITCH_INT  15
+#define BW_SW_POWER_EN 41
+#define BW_VBAT_SENSE  40
+#define BW_SENSE_1V1   42
+#define BW_SWITCH_MASK ((1u << BTN_A) | (1u << BTN_B) | (1u << BTN_C) | (1u << BTN_UP) | (1u << BTN_DOWN))
+
 // --- PSRAM ---
 #define BW_PSRAM_CS    8
 

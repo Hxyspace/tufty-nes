@@ -2,7 +2,7 @@
 
 运行在 **Pimoroni Tufty 2350** 上的原生 NES 模拟器，支持从 Flash 加载游戏、卡片式游戏菜单、USB 磁盘管理和 PC 串口手柄。
 
-当前版本已通过 Tufty 2350 实机测试。手柄通过 USB CDC 连接，**BLE 支持开发中**。
+手柄通过 USB CDC 连接，**BLE 支持开发中**。
 
 ## 功能
 
@@ -12,6 +12,7 @@
 - Windows 键盘发送器，支持 NES 八键及 TGP v1/v2 协议。
 - USB MSC 磁盘模式，可直接复制和管理游戏文件。
 - 保存屏幕亮度、手柄 ID、按键映射和上次选择的游戏。
+- 支持手动深度休眠和菜单空闲自动休眠，按实体按键唤醒。
 - ROM 检查工具，支持已知错误头部修正及备份。
 
 ## 硬件与兼容性
@@ -65,6 +66,10 @@ sudo apt install git python3 cmake ninja-build build-essential \
 | Start / Select | C / 由手柄提供 | Enter / 右 Shift |
 | 游戏方向 | Up、Down；左右由手柄提供 | 方向键或 WASD |
 | 返回菜单 | Home | Esc |
+| 深度休眠 | 长按 Reset 至 LED 动画结束 | — |
+| 唤醒 | A / B / C / Up / Down | — |
+
+菜单空闲 5 分钟后自动休眠；游戏运行和 USB 磁盘模式不会自动休眠。唤醒后重新启动并返回菜单，游戏进度不保留。时间设置和串口休眠命令见 [使用指南](docs/usage.md#休眠与唤醒)。
 
 启动 PC 手柄发送器：
 

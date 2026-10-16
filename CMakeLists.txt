@@ -33,6 +33,7 @@ set(fatfs "${upstream}/drivers/fatfs")
 add_executable(nes
   src/main.cpp src/display.cpp src/menu.cpp src/storage.cpp src/fat_disk.cpp
   src/rom_store.cpp src/usb.cpp src/descriptors.cpp src/protocol.cpp
+  src/power.cpp src/power_board.cpp src/power_reset.cpp
   "${upstream}/infones/InfoNES.cpp" "${upstream}/infones/InfoNES_Mapper.cpp"
   "${upstream}/infones/InfoNES_pAPU.cpp" "${upstream}/infones/K6502.cpp"
   "${fatfs}/ff.c" "${fatfs}/ffunicode.c"

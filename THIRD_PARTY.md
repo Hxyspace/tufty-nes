@@ -12,6 +12,7 @@
 | RM1 ROMFS 解析、文件系统布局、独占 MSC、Reset 入口 | `tufty2350-native/src/storage/`、USB 实现 | `src/rom_store.*`、存储/USB 设计；MIT 声明见 `licenses/LICENSE` |
 | ST7789 初始化和 PIO 并口驱动 | native，经 Pimoroni badgeware-cpp，参考提交 `7d1ef0882c6e9dcf374542528f6f211e287b5afb` | 改写为双核 DMA 显示；见 `licenses/PIMORONI-LICENSE` |
 | Tufty Reset 设计 | Pimoroni Tufty，参考提交 `ee84772fb7f7d5424e9593029caba815c6f89c80`，经 native | USB Reset 设计，Pimoroni MIT 许可同上 |
+| 深度休眠、唤醒与长按 Reset 动画 | `tufty2350-native/src/platform/tufty/{powman,reset_startup}.cpp`，基于 Pimoroni Tufty POWMAN 实现 | `src/power_board.*`、`src/power_reset.cpp`；MIT 许可见 `licenses/LICENSE` 和 `licenses/PIMORONI-LICENSE` |
 | Console 交互 | native 的 rtc_console、rtc_platform | 原生实现回显/换行/退格，参考工程 MIT 许可同上 |
 | TGP v1 与菜单设计、背景 | `TUFTY_yuan/lib/tufty_runtime/gamepad/`、`office/apps/menu/`、`office/assets/background.png` | 原生重写；TGP v2 为本项目增加，背景来自该项目素材 |
 | Lato Regular/Heavy/Bold ASCII 字形 | Łukasz Dziedzic | 生成菜单位图，SIL OFL 1.1，见 `licenses/LATO-LICENSE` |

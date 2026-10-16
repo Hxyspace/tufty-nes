@@ -3,7 +3,7 @@
 #include "fat_disk.hpp"
 #include "display.hpp"
 #include "console.hpp"
-#include "hardware/powman.h"
+#include "power.hpp"
 #include "hardware/watchdog.h"
 #include "pico/bootrom.h"
 #include "pico/stdio/driver.h"
@@ -56,7 +56,7 @@ static void flush_console() {
         sleep_ms(1);
     }
 }
-static void transition_notice(const char *message) {
+void transition_notice(const char *message) {
     std::fflush(stdout);
     // Preserve the final status even if earlier logs filled our software queue.
     size_t n=std::strlen(message);
@@ -70,18 +70,6 @@ static void echo_console(const char *p,size_t n) {console_tx.add(p,n);}
 static void command(const char *s);
 static console::Line console_line(echo_console,command);
 static stdio_driver_t driver{};
-static int64_t clear_double(alarm_id_t,void *) {
-    powman_clear_bits(&powman_hw->chip_reset,POWMAN_CHIP_RESET_DOUBLE_TAP_BITS); return 0;
-}
-bool double_reset() {
-    bool previous=powman_hw->chip_reset&POWMAN_CHIP_RESET_DOUBLE_TAP_BITS;
-    clear_double(0,nullptr);
-    if(watchdog_caused_reboot() || !(powman_hw->chip_reset&POWMAN_CHIP_RESET_HAD_RUN_LOW_BITS)) return false;
-    if(previous) return true;
-    powman_set_bits(&powman_hw->chip_reset,POWMAN_CHIP_RESET_DOUBLE_TAP_BITS);
-    if(add_alarm_in_ms(1000,clear_double,nullptr,false)<0) clear_double(0,nullptr);
-    return false;
-}
 bool disk_mode() {return mode;}
 void init(bool disk) {
     mode=disk;
@@ -92,8 +80,13 @@ void init(bool disk) {
     pad.send=send_protocol;
 }
 static void command(const char *s) {
+    if(power::pending() && std::strcmp(s,"power status")) {
+        std::printf("POWER SLEEP: PENDING; command rejected\n"); return;
+    }
+    if(power::command(s)) return;
     if(!std::strcmp(s,"help")) {
-        std::printf("help | status | usb disk | bootsel | rescan | save | brightness 1..100 | padid 1..65535 | swapab 0/1\n");
+        std::printf("help | status | usb disk | bootsel | rescan | save | brightness 1..100 | padid 1..65535 | swapab 0/1\n"
+                    "power status | power sleep [seconds] | power idle 0..86400\n");
     } else if(!std::strcmp(s,"status")) {
         std::printf("FAT=%u sector=%u State=%u ROMs=%u pad=%u packets=%lu rejected=%lu dirty=%u\n",
             storage::mounted(),flashfat::disk.sector_size,storage::state_ready(),unsigned(storage::count),pad.active,
@@ -133,15 +126,23 @@ void poll() {
     console_connected=c0;
     for(int budget=0;budget<128 && tud_cdc_n_available(0);++budget) {
         int c=tud_cdc_n_read_char(0);
-        if(c0 && !mode && c>=0) console_line.feed(static_cast<uint8_t>(c));
+        if(c0 && !mode && c>=0) {power::activity(); console_line.feed(static_cast<uint8_t>(c));}
     }
     uint32_t now=to_ms_since_boot(get_absolute_time());
     for(int budget=0;budget<256 && tud_cdc_n_available(1);++budget) {
         int c=tud_cdc_n_read_char(1);
-        if(connected && !mode) pad.byte(c,now);
+        if(connected && !mode) {
+            pad.byte(c,now);
+            if(pad.buttons || pad.menu) power::activity();
+        }
     }
     if(!mode) pad.poll(now);
     console_tx.drain(0); protocol_tx.drain(1);
+}
+void shutdown() {
+    pad.reset();
+    stdio_set_driver_enabled(&driver,false);
+    tud_disconnect(); tud_deinit(0);
 }
 void acquire_disk(bool valid) {
     owned=valid && storage::unmount_system();
