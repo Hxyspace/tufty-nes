@@ -64,7 +64,7 @@ python tools/serial_gamepad.py --port COM7 --controller-id 1
 
 设备 `padid` 必须与发送器的 `--controller-id` 相同。默认使用 TGP v2 提供 NES 八键；旧版五键发送器可用 `--v1`，仅支持方向和 NES A。
 
-发送器读取全局键盘状态，运行时其他窗口也可能收到按键。Ctrl+C 释放按键并退出。完整键位见 [README](../README.md#操作)。
+发送器只在运行脚本的终端窗口处于前台时接收按键；切到其他窗口会自动释放全部按键，串口连接继续保持。Windows Terminal 请在前台启动脚本，建议使用独立窗口。Ctrl+C 释放按键并退出。完整键位见 [README](../README.md#操作)。`--buttons` 固定按键测试不受窗口焦点影响。
 
 Linux 暂只支持发送固定按键状态：
 

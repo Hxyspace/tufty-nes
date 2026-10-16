@@ -2,9 +2,10 @@ import importlib.util
 import struct
 import sys
 import unittest
+from unittest.mock import Mock,patch
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
-from serial_gamepad import Sender,packet
+from serial_gamepad import FocusedKeyboard,Sender,packet
 from check_uf2 import inspect
 
 class Wire:
@@ -13,6 +14,41 @@ class Wire:
     def read(self,n): data,self.rx=self.rx[:n],self.rx[n:]; return data
 
 class Tests(unittest.TestCase):
+    def test_foreground_keyboard(self):
+        for visible in (True,False):
+            with self.subTest(visible_console=visible):
+                api=Mock()
+                window=0x123456789
+                api.kernel32.GetConsoleWindow.return_value=window if visible else 42
+                api.user32.IsWindowVisible.return_value=visible
+                api.user32.GetForegroundWindow.return_value=window
+                pressed={ord('Z'),0x1b}
+                api.user32.GetAsyncKeyState.side_effect=lambda key: 0x8000 if key in pressed else 0
+                with patch('ctypes.windll',api,create=True): capture=FocusedKeyboard()
+                self.assertEqual(capture.window,window)
+                self.assertEqual(capture.read(2),(1,True))
+                w=Wire(); s=Sender(w)
+                w.rx=b'#TGP:READY:'+s.nonce+b'\n'; s.poll()
+                s.send(capture.read(2)[0])
+                self.assertEqual(w.tx[-1],packet(1,0,1))
+
+                # Losing focus releases a held NES button and ignores Esc.
+                api.user32.GetForegroundWindow.return_value=99
+                api.user32.GetAsyncKeyState.reset_mock()
+                self.assertEqual(capture.read(2),(0,False))
+                api.user32.GetAsyncKeyState.assert_not_called()
+                s.send(capture.read(2)[0])
+                self.assertEqual(w.tx[-1],packet(1,1,0))
+
+                api.user32.GetForegroundWindow.return_value=window
+                pressed={ord('B')}
+                self.assertEqual(capture.read(1),(16,False))
+                pressed={ord('Z')}
+                self.assertEqual(capture.read(2),(1,False))
+                # A focus change during a sample must also discard its keys.
+                api.user32.GetForegroundWindow.side_effect=[window,99]
+                self.assertEqual(capture.read(2),(0,False))
+
     def test_lost_handshake(self):
         w=Wire(); now=[0.0]; s=Sender(w,clock=lambda:now[0])
         old=s.nonce

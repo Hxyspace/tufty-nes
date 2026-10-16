@@ -103,9 +103,7 @@ def choose_port(requested):
     for i,p in enumerate(found): print(f'  {i+1}. {p.device} {p.interface or p.description}')
     return found[int(input('Choose Gamepad / CDC1: '))-1].device
 
-def keyboard(version):
-    import ctypes
-    get=ctypes.windll.user32.GetAsyncKeyState
+def keyboard(version,get):
     down=lambda key: bool(get(key)&0x8000)
     if version==1:
         keys=((0x26,1),(ord('W'),1),(0x28,2),(ord('S'),2),
@@ -119,6 +117,38 @@ def keyboard(version):
     for key,bit in keys:
         if down(key): bits|=bit
     return bits,down(0x1b)
+
+class FocusedKeyboard:
+    """Read gamepad keys only while the launching terminal is foreground."""
+    def __init__(self):
+        import ctypes
+        from ctypes import wintypes
+        user32=ctypes.windll.user32
+        kernel32=ctypes.windll.kernel32
+        # HWND is pointer-sized, including on 64-bit Windows.
+        kernel32.GetConsoleWindow.argtypes=[]
+        kernel32.GetConsoleWindow.restype=wintypes.HWND
+        user32.GetForegroundWindow.argtypes=[]
+        user32.GetForegroundWindow.restype=wintypes.HWND
+        user32.IsWindowVisible.argtypes=[wintypes.HWND]
+        user32.IsWindowVisible.restype=wintypes.BOOL
+        user32.GetAsyncKeyState.argtypes=[ctypes.c_int]
+        user32.GetAsyncKeyState.restype=ctypes.c_short
+        self.foreground=user32.GetForegroundWindow
+        self.get=user32.GetAsyncKeyState
+        self.window=kernel32.GetConsoleWindow()
+        # Windows Terminal uses an invisible pseudoconsole window. Capture its
+        # foreground terminal once at startup, never the newly focused app.
+        if not self.window or not user32.IsWindowVisible(self.window):
+            self.window=self.foreground()
+        if not self.window:
+            raise OSError('no terminal window; start this script in an active terminal')
+
+    def read(self,version):
+        if self.foreground()!=self.window: return 0,False
+        state=keyboard(version,self.get)
+        # Discard a sample if focus changed while querying the keys.
+        return state if self.foreground()==self.window else (0,False)
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
@@ -134,11 +164,14 @@ def main():
     if args.buttons is None and os.name!='nt': p.error('keyboard capture uses Windows; use --buttons on Linux')
     try: import serial
     except ImportError: p.error('install dependency: python -m pip install pyserial')
+    try: capture=FocusedKeyboard() if args.buttons is None else None
+    except OSError as e: p.error(str(e))
     connection=None
     sender=None
     started=time.monotonic()
     previous_menu=False
     print('Arrows/WASD: move; Z/Space: A; X: B; Enter: Start; Right Shift: Select; Esc: library; Ctrl+C: quit')
+    if capture: print('Keyboard active only in this terminal window; switching windows releases all buttons.')
     try:
         while args.seconds is None or time.monotonic()-started<args.seconds:
             try:
@@ -153,7 +186,7 @@ def main():
                 was_ready=sender.ready
                 sender.poll()
                 if sender.ready and not was_ready: print('READY')
-                bits,menu=(args.buttons,False) if args.buttons is not None else keyboard(version)
+                bits,menu=(args.buttons,False) if args.buttons is not None else capture.read(version)
                 sender.send(bits)
                 if menu and not previous_menu: sender.menu()
                 previous_menu=menu
