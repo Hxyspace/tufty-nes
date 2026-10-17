@@ -53,15 +53,25 @@ sudo apt install git python3 cmake ninja-build build-essential \
 依赖 URL 和完整 commit SHA 保存在 [deps.lock.json](../deps.lock.json)。依赖下载到 Git 忽略的 `lib/`，无需初始化主仓库 submodule。SDK 内部依赖按其 gitlink 固定版本下载。
 
 ```bash
-python3 tools/deps.py                 # 准备固件依赖
-python3 tools/deps.py --profile host  # 只准备主机测试与 ROM 检查依赖
-python3 tools/deps.py --check         # 检查已下载版本和补丁
-python3 tools/deps.py --radio         # 额外准备 CYW43、BTstack 源码
+python3 tools/deps.py --radio         # 准备完整固件依赖，含 CYW43、BTstack
+python3 tools/deps.py --profile host  # 准备基础协议、存储与 ROM 检查依赖
+python3 tools/deps.py --radio --check # 检查固件依赖版本和补丁
+python3 tools/deps.py --profile host --radio # 准备含真实 HID 解析器的主机测试
 ```
 
 上游只应用两个补丁：InfoNES 周期服务钩子和 FatFs 外部配置入口。板级定义、存储配置和应用构建均由主项目维护。脚本会识别已应用的补丁；版本不符、补丁冲突或依赖中存在额外修改时会停止，保留本地文件。
 
-升级依赖时，应更新锁文件、核对补丁并运行测试。对依赖的适配修改放入 `patch/`，应用功能放入 `src/`。`--radio` 仅下载源码，当前固件尚未接入 BLE。
+升级依赖时，应更新锁文件、核对补丁并运行测试。对依赖的适配修改放入 `patch/`，应用功能放入 `src/`。
+
+## 双核与输入服务
+
+Core 0 运行模拟器、菜单、TinyUSB 和 BLE；Core 1 负责屏幕转换及 PIO/DMA 输出。串口输入量较小，BLE 使用 CYW43 polling 架构，在模拟器周期钩子及菜单/帧等待中服务，不占用显示核。服务间隔目标为 1 ms，无线 HCI 每次最多处理 4 轮。`ble status` 的 `poll_gap_ms` 记录最大实际轮询间隔，`poll_work_ms` 记录 CYW43 单次轮询最大耗时，`restarts` 记录超时恢复次数；前者还包含两次轮询间其他工作耗时及首次控制器初始化。
+
+连接超时先取消连接，再关闭 HCI 控制器；连接失败、启动或取消/断开无响应时也会关闭控制器，等待 OFF 后自动重新启动。正常空闲扫描及已就绪连接不会因输入静默触发此恢复；就绪后不发起周期性 GATT 检查。运行时恢复保留栈及事件注册，不重复初始化 GATT，也不写入 Flash 配对库。调用可能同步回调的 BTstack API 前先设置等待状态，避免回调的完成状态被覆盖。
+
+USB 磁盘模式不启动无线。深度休眠前释放按键并关闭无线栈。BLE 临时配对记录只存 RAM，启动包装器和 RAM 数据库避免 SDK 默认 Flash TLV 占用 `/state`；重启后重新连接。
+
+无线采用单核主动轮询，驱动中的短延时使用硬件计时忙等，不依赖闹钟或信号量唤醒；菜单等候显示核时持续服务 USB/BLE。该适配参考 native 的等待处理，另覆盖 BLE 总线唤醒时的毫秒延时。忙等期间不递归调用无线或 USB 服务；不改变菜单深度休眠策略。
 
 ## 测试
 
@@ -70,14 +80,14 @@ sudo apt install dosfstools mtools
 ./tools/test.sh
 ```
 
-主机测试覆盖手柄协议、Console、菜单休眠计时与休眠请求、USB 磁盘界面与传输状态、512/4096 字节 FAT、配置保存与错误处理、ROM 修复、UF2 检查，以及依赖补丁与本地修改保护。C/C++ 测试启用 ASan/UBSan，使用临时文件系统镜像。实际低功耗状态和物理唤醒需在设备上验证。
+主机测试覆盖串口协议、BLE 状态机和真实 BTstack HID 描述解析、Console、菜单休眠计时与休眠请求、USB 磁盘界面与传输状态、512/4096 字节 FAT、配置保存与错误处理、ROM 修复、UF2 检查，以及依赖补丁与本地修改保护。C/C++ 测试启用 ASan/UBSan，使用临时文件系统镜像。无线连接、输入延迟、实际低功耗状态和物理唤醒需在设备上验证。
 
 ## 项目结构
 
 ```text
 src/        应用、显示、菜单、存储与输入
 board/      Tufty 板级定义
-config/     FatFs、TinyUSB 配置
+config/     FatFs、TinyUSB、BTstack 配置
 cmake/      构建辅助与固件范围约束
 patch/      上游适配补丁
 tools/      依赖、构建、ROM 和 PC 手柄工具

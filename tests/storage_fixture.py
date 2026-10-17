@@ -15,4 +15,18 @@ with tempfile.TemporaryDirectory(prefix='tufty-nes-test-') as d:
     rom.write_bytes(b'NES\x1a'+bytes((1,0,0,0))+b'\0'*8+b'\xea'*16384)
     for name in ('Sample Game.nes','测试.nes'):
         subprocess.run(['mcopy','-i',str(image),str(rom),'::roms/'+name],check=True)
+    scenario=sys.argv[3] if len(sys.argv)>3 else ''
+    gamepads={
+        'gamepad_override':'{"controller_id":456,"ble_enabled":true,"ble_peer":"03:25:20:32:28:98","ble_random":false,"ble_scan_uuid":"0x180f"}',
+        'gamepad_invalid':'{"controller_id":456,"ble_peer":"not-a-mac"}',
+        'gamepad_bad_uuid':'{"controller_id":456,"ble_scan_uuid":"0x1812oops"}',
+        'gamepad_missing_fields':'{"ble_peer":"03:25:20:32:28:98"}',
+        'gamepad_large':' '*1024,
+        'gamepad_no_state':'{"ble_peer":"03:25:20:32:28:98","ble_random":false}'
+    }
+    if scenario in gamepads:
+        config=root/'gamepad.json'
+        config.write_text(gamepads[scenario])
+        subprocess.run(['mmd','-i',str(image),'::config'],check=True)
+        subprocess.run(['mcopy','-i',str(image),str(config),'::config/gamepad.json'],check=True)
     subprocess.run([sys.argv[1],str(image),sys.argv[2],*sys.argv[3:]],check=True)

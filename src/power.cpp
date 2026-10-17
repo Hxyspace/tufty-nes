@@ -4,6 +4,7 @@
 #include "storage.hpp"
 #include "usb.hpp"
 #include "display.hpp"
+#include "ble.hpp"
 #include "pico/multicore.h"
 #include "pico/stdlib.h"
 #include <cstdio>
@@ -41,6 +42,7 @@ Error enter(uint32_t duration_ms) {
     usb::transition_notice("POWER SLEEP: ENTERING; wake restarts the firmware\r\n");
     // USB draining may take time. Check inputs once more before any teardown.
     if(!ready()) return Error::Busy;
+    ble::shutdown();
     display::prepare_reboot();
     multicore_reset_core1(); // No PSRAM/DMA owner may survive pin/clock shutdown.
     usb::shutdown();

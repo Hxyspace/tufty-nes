@@ -21,6 +21,8 @@
 
 `tools/rom_fixes.json` 记录从 [FCEUX ines-correct.h](https://github.com/TASEmulators/fceux/blob/master/src/ines-correct.h) 核对的部分 CRC32/mapper/镜像事实，未引入 FCEUX 程序代码或完整数据库。Rainbow Islands 规则增加了 PRG/CHR 数据的 SHA256 和长度约束。ROM 文件不随项目或固件分发。
 
-CYW43/BTstack 为可选源码依赖，版本由 SDK gitlink 锁定，当前未链接到固件。启用和发布时须一并收录实际使用库的许可文件及平台授权条款。
+BLE 使用 CYW43 驱动和 BlueKitchen BTstack，版本由 SDK gitlink 锁定；安全配对还使用 BTstack 随附的 micro-ecc。分发包包含 CYW43、BTstack 原始许可、Raspberry Pi 平台授权条款及 micro-ecc 许可；这些组件各自的许可适用范围以原文为准。
+
+`src/ble_stack.c` 的启动包装器改编自 Pico SDK `btstack_cyw43.c`，保留 Raspberry Pi BSD-3-Clause 声明，使用 RAM 配对数据库避免覆盖 State。九字节 HID 格式依据 `XTARKGamepad` 接收解析器及 Android `ble_gamepad` 的 `docs/hid-protocol.md`、`HidProtocol.kt`；未引入 ESP32/NimBLE 实现。
 
 `tools/package.py` 将当前固件实际依赖的许可证和源码版本信息复制到 `dist/`；依赖完整来源在 `deps.lock.json`，对上游的修改在 `patch/`。

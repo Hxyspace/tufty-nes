@@ -126,6 +126,8 @@ def prepare(project=PROJECT, profile="firmware", radio=False, check_only=False):
     project = Path(project).resolve()
     deps = load_lock(project / "deps.lock.json")
     names = HOST_DEPS if profile == "host" else tuple(deps)
+    if profile == "host" and radio:
+        names = (*names, "pico-sdk")
     for name in names:
         spec = deps[name]
         checkout = project / "lib" / name
@@ -142,7 +144,7 @@ def prepare(project=PROJECT, profile="firmware", radio=False, check_only=False):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=("firmware", "host"), default="firmware")
-    parser.add_argument("--radio", action="store_true", help="also fetch SDK CYW43/BTstack sources; does not enable BLE in firmware")
+    parser.add_argument("--radio", action="store_true", help="include SDK CYW43/BTstack sources (also for host BLE tests)")
     parser.add_argument("--check", action="store_true", help="verify existing checkouts without downloading or applying patches")
     args = parser.parse_args(argv)
     try:

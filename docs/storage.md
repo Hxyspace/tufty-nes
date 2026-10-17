@@ -25,15 +25,41 @@ FatFs 支持 512、1024、2048、4096 字节逻辑扇区，底层 Flash 按 4096
 
 | 字段 | 默认值 | 用途 |
 |---|---|---|
-| `controller_id` | `1` | 手柄 ID |
+| `controller_id` | `1` | 串口手柄 ID |
 | `brightness` | `80` | 屏幕亮度，1–100 |
 | `swap_ab` | `false` | A/B 互换 |
 | `last_rom` | 空 | 上次选择的游戏文件名 |
 | `menu_sleep_seconds` | `300` | 菜单空闲休眠秒数，0 关闭，最大 86400 |
+| `ble_enabled` | `true` | 启用 BLE HID 扫描和连接 |
+| `ble_peer` | 空 | 目标 MAC，空值自动扫描 |
+| `ble_random` | `false` | 指定目标使用 random 地址类型；否则 public |
+| `ble_scan_uuid` | `"0x1812"` | 自动扫描时匹配的 16 位服务 UUID |
 
 配置通过临时文件和原子重命名写入，其他 State 文件保持原样。State 无效或 NES 配置损坏时使用默认配置，并禁用保存。此文件不包含游戏进度或电池 SRAM。
 
-已有配置缺少 `menu_sleep_seconds` 时使用默认值，无需迁移文件。菜单自动休眠及串口休眠会先保存待写配置；长按 Reset 会先重启，使用之前应保存设置。
+已有配置缺少新增字段时使用默认值，无需迁移文件。BLE 配对信息仅保存在 RAM，配置文件只保存连接偏好。菜单自动休眠及串口休眠会先保存待写配置；长按 Reset 会先重启，使用之前应保存设置。
+
+### 从 USB 磁盘配置手柄
+
+将 [examples/gamepad.json](../examples/gamepad.json) 复制到设备 USB 磁盘的 `config/gamepad.json`，安全弹出后设备重启加载。固件中的路径为 `/system/config/gamepad.json`。
+
+```json
+{
+  "ble_enabled": true,
+  "ble_peer": "",
+  "ble_random": false,
+  "ble_scan_uuid": "0x1812"
+}
+```
+
+- 自动连接安卓或其他兼容 HID：`ble_peer` 留空，`ble_scan_uuid` 保持 `"0x1812"`。这不是安卓专属 ID，附近多个 HID 可能竞争连接。
+- 固定原手柄：将 `ble_peer` 改为手柄背面 MAC，例如 `"03:25:20:32:28:98"`；请替换为自己的地址。参考 XTARK 手柄使用 public 地址，`ble_random` 保持 `false`。指定 MAC 时按地址及地址类型筛选，不要求广播列出扫描 UUID。
+- `ble_scan_uuid` 必须是字符串 `"0x"` 加四位十六进制数。它只控制广播筛选；连接后仍查找标准 HID Service `0x1812`，修改它不会增加其他 GATT 协议支持。
+- 可选 `controller_id`（1–65535）设置 CDC1 串口的 TGP ID；与 BLE 的服务 UUID、MAC、Report ID 分别独立。
+
+文件最多 1023 字节，使用合法 JSON。开机先加载 `/state/nes.json`，再用此文件中提供的字段覆盖；未提供的字段沿用 State 配置。文件不存在则使用 State 配置；读取失败或内容无效时整份文件忽略，不部分应用字段，并输出 Console 日志。
+
+Console 命令可修改本次运行的设置，`save` 仍写入 `/state/nes.json`，不会回写 FAT。下次开机时 `config/gamepad.json` 中的字段仍有优先级；需要长期修改时编辑该文件，或删除对应字段后通过 Console 保存。
 
 ## 升级注意事项
 

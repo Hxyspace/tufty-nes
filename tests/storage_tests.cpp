@@ -36,7 +36,7 @@ static int prog_lfs(const lfs_config *,lfs_block_t b,lfs_off_t at,const void *p,
 }
 static int erase_lfs(const lfs_config *,lfs_block_t b) {flash_range_erase(kState.offset+b*4096,4096); return 0;}
 static int sync_lfs(const lfs_config *) {return 0;}
-static void fixture_state(bool corrupt,const char *idle=nullptr) {
+static void fixture_state(bool corrupt,const char *idle=nullptr,const char *ble=nullptr) {
     lfs_config cfg{}; uint8_t r[256],p[256],look[32],fbuf[256];
     cfg.read=read_lfs; cfg.prog=prog_lfs; cfg.erase=erase_lfs; cfg.sync=sync_lfs;
     cfg.read_size=cfg.prog_size=cfg.cache_size=256; cfg.block_size=4096;
@@ -53,6 +53,7 @@ static void fixture_state(bool corrupt,const char *idle=nullptr) {
     assert(lfs_file_opencfg(&fs,&f,"/state/nes.json",LFS_O_WRONLY|LFS_O_CREAT,&fc)==0);
     std::string nes=corrupt?"{broken":"{\"controller_id\":23,\"brightness\":67,\"swap_ab\":true,\"last_rom\":\"Sample Game.nes\"}";
     if(idle) {nes.pop_back(); nes+=",\"menu_sleep_seconds\":"; nes+=idle; nes+='}';}
+    if(ble) {nes.pop_back(); nes+=','; nes+=ble; nes+='}';}
     assert(lfs_file_write(&fs,&f,nes.data(),nes.size())==static_cast<lfs_ssize_t>(nes.size()));
     assert(lfs_file_close(&fs,&f)==0); assert(lfs_unmount(&fs)==0);
 }
@@ -65,22 +66,36 @@ int main(int argc,char **argv) {
     std::ifstream input(argv[1],std::ios::binary); assert(input);
     input.read(reinterpret_cast<char *>(flash+kSystem.offset),kSystem.bytes); assert(input.gcount()==kSystem.bytes);
     std::vector<uint8_t> original(flash,flash+16*1024*1024);
-    bool blank=argc==4 && std::string(argv[3])=="blank";
+    std::string scenario=argc==4?argv[3]:"";
+    bool gamepad_override=scenario=="gamepad_override";
+    bool gamepad_missing=scenario=="gamepad_missing_fields";
+    bool gamepad_no_state=scenario=="gamepad_no_state";
+    bool blank=argc==4 && (std::string(argv[3])=="blank" || gamepad_no_state);
     bool corrupt=argc==4 && std::string(argv[3])=="corrupt";
     bool idle_off=argc==4 && std::string(argv[3])=="idle_off";
     bool bad_idle=argc==4 && std::string(argv[3])=="bad_idle";
-    if(!blank) fixture_state(corrupt,idle_off?"0":bad_idle?"86401":nullptr);
-    if(blank || corrupt || bad_idle) {
+    bool custom_ble=argc==4 && (std::string(argv[3])=="ble" || scenario.rfind("gamepad_",0)==0);
+    bool bad_peer=argc==4 && std::string(argv[3])=="bad_peer";
+    bool bad_ble=argc==4 && std::string(argv[3])=="bad_ble";
+    const char *ble=custom_ble?"\"ble_enabled\":false,\"ble_peer\":\"AA:BB:CC:DD:EE:FF\",\"ble_random\":true":
+        bad_peer?"\"ble_peer\":\"garbage\"":bad_ble?"\"ble_enabled\":1":nullptr;
+    if(!blank) fixture_state(corrupt,idle_off?"0":bad_idle?"86401":nullptr,ble);
+    if(blank || corrupt || bad_idle || bad_peer || bad_ble) {
         std::vector<uint8_t> before(flash,flash+16*1024*1024);
         storage::init(); assert(storage::mounted() && !storage::state_ready());
+        if(gamepad_no_state) assert(std::string(storage::config.ble_peer)=="03:25:20:32:28:98");
         assert(!storage::save());
         assert(std::memcmp(flash,before.data(),before.size())==0);
         return 0;
     }
     storage::init(); assert(storage::mounted() && storage::state_ready());
-    assert(storage::config.controller==23 && storage::config.brightness==67 && storage::config.swap_ab);
+    assert(storage::config.controller==(gamepad_override?456:23) && storage::config.brightness==67 && storage::config.swap_ab);
     assert(std::string(storage::config.last_rom)=="Sample Game.nes");
     assert(storage::config.menu_sleep_seconds==(idle_off?0u:300u)); // Old/default and disabled settings.
+    assert(storage::config.ble_enabled==(gamepad_override || !custom_ble));
+    assert(storage::config.ble_random==(!gamepad_override && custom_ble));
+    assert(std::string(storage::config.ble_peer)==((gamepad_override || gamepad_missing)?"03:25:20:32:28:98":custom_ble?"AA:BB:CC:DD:EE:FF":""));
+    assert(storage::config.ble_scan_uuid==(gamepad_override?0x180f:0x1812));
     assert(flashfat::disk.sector_size==std::stoi(argv[2]));
     storage::scan(); assert(storage::count==2);
     bool unicode=false;
@@ -91,12 +106,18 @@ int main(int argc,char **argv) {
     ines::Image image; assert(ines::inspect(data,bytes,image));
     storage::config.controller=65535; storage::config.brightness=35; storage::config.swap_ab=true;
     storage::config.menu_sleep_seconds=0;
+    storage::config.ble_enabled=false; storage::config.ble_random=true;
+    storage::config.ble_scan_uuid=0x1812;
+    std::strcpy(storage::config.ble_peer,"AA:BB:CC:DD:EE:FF");
     std::strcpy(storage::config.last_rom,"测试.nes");
     assert(storage::save());
     char text[1024]; size_t actual;
     assert(storage::read_file("/state/nes.json",text,sizeof(text)-1,actual)); text[actual]=0;
     assert(std::strstr(text,"65535") && std::strstr(text,"测试.nes"));
     assert(std::strstr(text,"\"menu_sleep_seconds\":0"));
+    assert(std::strstr(text,"\"ble_enabled\":false") && std::strstr(text,"\"ble_random\":true") &&
+           std::strstr(text,"\"ble_peer\":\"AA:BB:CC:DD:EE:FF\""));
+    assert(std::strstr(text,"\"ble_scan_uuid\":\"0x1812\""));
     assert(storage::read_file("/state/settings.json",text,sizeof(text)-1,actual)); text[actual]=0;
     assert(std::string(text)=="{\"brightness\":42}");
     assert(!storage::read_file("/system/../state/settings.json",text,sizeof(text),actual));

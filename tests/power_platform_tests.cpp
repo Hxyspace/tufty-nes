@@ -20,6 +20,7 @@ bool state_ready() {return true;}
 bool save() {events+='S'; ++saves; return save_ok;}
 }
 namespace display {void prepare_reboot() {events+='D';}}
+namespace ble {void shutdown() {events+='B';}}
 namespace usb {
 bool disk_requested=false,save_requested=false,dirty=false;
 bool disk_mode() {return disk;}
@@ -48,7 +49,7 @@ int main() {
     assert(power::command("power idle 86401")); assert(storage::config.menu_sleep_seconds==300);
     assert(power::command("power idle 5")); assert(usb::dirty);
     clock_ms=4999; power::idle(false); assert(!power::pending());
-    clock_ms=5000; power::idle(false); expect_sleep(0,"SLDCUP");
+    clock_ms=5000; power::idle(false); expect_sleep(0,"SLBDCUP");
     assert(!usb::dirty && saves==1);
     // Actual input resets idle; a held key continually prevents sleep.
     clock_ms=10000; power::idle(true); assert(!power::pending());
@@ -58,7 +59,7 @@ int main() {
     // Time spent in-game never contributes to the next menu's timeout.
     power::menu(false); clock_ms=1000000; power::idle(false); assert(!power::pending());
     power::menu(true); clock_ms+=4999; power::idle(false); assert(!power::pending());
-    ++clock_ms; power::idle(false); expect_sleep(0,"LDCUP");
+    ++clock_ms; power::idle(false); expect_sleep(0,"LBDCUP");
     assert(power::command("power idle 0"));
     clock_ms+=1000000; power::idle(false); assert(!power::pending());
     usb::dirty=false;
@@ -71,11 +72,11 @@ int main() {
     usb::dirty=true; save_ok=false; power::command("power sleep 10");
     assert(power::pending()); power::process(); assert(!power::pending());
     assert(usb::dirty && events=="S"); events.clear();
-    save_ok=true; power::command("power sleep 10"); expect_sleep(10000,"SLDCUP");
+    save_ok=true; power::command("power sleep 10"); expect_sleep(10000,"SLBDCUP");
     // A button pressed during log drain still cancels before shutdown.
     press_during_drain=true; power::command("power sleep"); power::process();
     assert(events=="L" && !power::pending()); events.clear();
     press_during_drain=false; wake_idle=true;
-    power::command("power sleep 4294967"); expect_sleep(4294967000u,"LDCUP");
+    power::command("power sleep 4294967"); expect_sleep(4294967000u,"LBDCUP");
     assert(power::command("power status"));
 }

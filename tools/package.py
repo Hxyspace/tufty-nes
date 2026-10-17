@@ -18,7 +18,7 @@ def main():
     dest = args.destination
     dest.mkdir(parents=True, exist_ok=True)
     info = {"dependencies": json.loads((PROJECT / "deps.lock.json").read_text()),
-            "artifacts": {}, "ble_enabled": False}
+            "artifacts": {}, "ble_enabled": True}
     try:
         info["source_commit"] = subprocess.check_output(["git", "-C", str(PROJECT), "rev-parse", "HEAD"],
                                                        stderr=subprocess.DEVNULL).decode().strip()
@@ -36,6 +36,10 @@ def main():
     docs.mkdir(exist_ok=True)
     for source in sorted((PROJECT / "docs").glob("*.md")):
         shutil.copy2(source, docs / source.name)
+    examples = dest / "examples"
+    examples.mkdir(exist_ok=True)
+    for source in sorted((PROJECT / "examples").glob("*.json")):
+        shutil.copy2(source, examples / source.name)
     licenses = dest / "licenses"
     licenses.mkdir(exist_ok=True)
     for source in (PROJECT / "licenses").iterdir():
@@ -43,7 +47,12 @@ def main():
             shutil.copy2(source, licenses / source.name)
     for source, name in (("littlefs/LICENSE.md", "LITTLEFS-LICENSE"), ("cjson/LICENSE", "CJSON-LICENSE"),
                          ("tufty-nes/pico-nes/LICENSE", "PICO-NES-LICENSE"), ("pico-sdk/LICENSE.TXT", "PICO-SDK-LICENSE"),
-                         ("pico-sdk/lib/tinyusb/LICENSE", "TINYUSB-LICENSE"), ("picotool/LICENSE.TXT", "PICOTOOL-LICENSE")):
+                         ("pico-sdk/lib/tinyusb/LICENSE", "TINYUSB-LICENSE"), ("picotool/LICENSE.TXT", "PICOTOOL-LICENSE"),
+                         ("pico-sdk/lib/btstack/LICENSE", "BTSTACK-LICENSE"),
+                         ("pico-sdk/src/rp2_common/pico_btstack/LICENSE.RP", "BTSTACK-LICENSE.RP"),
+                         ("pico-sdk/lib/btstack/3rd-party/micro-ecc/LICENSE.txt", "MICRO-ECC-LICENSE"),
+                         ("pico-sdk/lib/cyw43-driver/LICENSE", "CYW43-LICENSE"),
+                         ("pico-sdk/lib/cyw43-driver/LICENSE.RP", "CYW43-LICENSE.RP")):
         shutil.copy2(PROJECT / "lib" / source, licenses / name)
     fatfs = (PROJECT / "lib/tufty-nes/pico-nes/drivers/fatfs/ff.c").read_text()
     (licenses / "FATFS-LICENSE").write_text("\n".join(fatfs.splitlines()[:19]) + "\n")

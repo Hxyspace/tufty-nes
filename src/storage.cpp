@@ -2,6 +2,7 @@
 #include "fat_disk.hpp"
 #include "rom_store.hpp"
 #include "display.hpp"
+#include "hid_gamepad.hpp"
 #include "ff.h"
 #include "lfs.h"
 #include "cJSON.h"
@@ -82,10 +83,19 @@ static void load_config() {
     auto *swap=cJSON_GetObjectItemCaseSensitive(root,"swap_ab");
     auto *last=cJSON_GetObjectItemCaseSensitive(root,"last_rom");
     auto *idle=cJSON_GetObjectItemCaseSensitive(root,"menu_sleep_seconds");
+    auto *ble=cJSON_GetObjectItemCaseSensitive(root,"ble_enabled");
+    auto *peer=cJSON_GetObjectItemCaseSensitive(root,"ble_peer");
+    auto *random=cJSON_GetObjectItemCaseSensitive(root,"ble_random");
+    auto *uuid=cJSON_GetObjectItemCaseSensitive(root,"ble_scan_uuid");
+    uint8_t address[6];
+    uint16_t scan_uuid=config.ble_scan_uuid;
     if((id && (!cJSON_IsNumber(id) || id->valuedouble!=id->valueint || id->valueint<1 || id->valueint>65535)) ||
        (level && (!cJSON_IsNumber(level) || level->valuedouble!=level->valueint || level->valueint<1 || level->valueint>100)) ||
        (swap && !cJSON_IsBool(swap)) || (last && (!cJSON_IsString(last) || std::strlen(last->valuestring)>255)) ||
-       (idle && (!cJSON_IsNumber(idle) || idle->valuedouble!=idle->valueint || idle->valueint<0 || idle->valueint>86400))) {
+       (idle && (!cJSON_IsNumber(idle) || idle->valuedouble!=idle->valueint || idle->valueint<0 || idle->valueint>86400)) ||
+       (ble && !cJSON_IsBool(ble)) || (random && !cJSON_IsBool(random)) ||
+       (uuid && (!cJSON_IsString(uuid) || !hidpad::uuid16(uuid->valuestring,scan_uuid))) ||
+       (peer && (!cJSON_IsString(peer) || (peer->valuestring[0] && !hidpad::address(peer->valuestring,address))))) {
         writable_config=false; cJSON_Delete(root); return;
     }
     if(id) config.controller=id->valueint;
@@ -93,7 +103,47 @@ static void load_config() {
     if(swap) config.swap_ab=cJSON_IsTrue(swap);
     if(last) std::snprintf(config.last_rom,sizeof(config.last_rom),"%s",last->valuestring);
     if(idle) config.menu_sleep_seconds=idle->valueint;
+    if(ble) config.ble_enabled=cJSON_IsTrue(ble);
+    if(random) config.ble_random=cJSON_IsTrue(random);
+    config.ble_scan_uuid=scan_uuid;
+    if(peer) std::snprintf(config.ble_peer,sizeof(config.ble_peer),"%s",peer->valuestring);
     cJSON_Delete(root);
+}
+static void load_gamepad_config() {
+    // User-editable startup overrides on the USB-visible FAT volume. Runtime
+    // saves still go to /state; never write FAT while it belongs to firmware.
+    FILINFO info{};
+    FRESULT rc=f_stat("/config/gamepad.json",&info);
+    if(rc==FR_NO_FILE || rc==FR_NO_PATH) return;
+    char text[1024]; size_t actual=0;
+    if(rc!=FR_OK || (info.fattrib&AM_DIR) ||
+       !read_file("/system/config/gamepad.json",text,sizeof(text)-1,actual)) {
+        std::printf("Gamepad config: cannot read /system/config/gamepad.json; settings retained\n");
+        return;
+    }
+    text[actual]=0;
+    cJSON *root=cJSON_ParseWithOpts(text,nullptr,true);
+    auto *id=cJSON_GetObjectItemCaseSensitive(root,"controller_id");
+    auto *ble=cJSON_GetObjectItemCaseSensitive(root,"ble_enabled");
+    auto *peer=cJSON_GetObjectItemCaseSensitive(root,"ble_peer");
+    auto *random=cJSON_GetObjectItemCaseSensitive(root,"ble_random");
+    auto *uuid=cJSON_GetObjectItemCaseSensitive(root,"ble_scan_uuid");
+    uint8_t address[6];
+    uint16_t scan_uuid=config.ble_scan_uuid;
+    bool valid=cJSON_IsObject(root) &&
+        (!id || (cJSON_IsNumber(id) && id->valuedouble==id->valueint && id->valueint>=1 && id->valueint<=65535)) &&
+        (!ble || cJSON_IsBool(ble)) && (!random || cJSON_IsBool(random)) &&
+        (!uuid || (cJSON_IsString(uuid) && hidpad::uuid16(uuid->valuestring,scan_uuid))) &&
+        (!peer || (cJSON_IsString(peer) && (!peer->valuestring[0] || hidpad::address(peer->valuestring,address))));
+    if(valid) {
+        if(id) config.controller=id->valueint;
+        if(ble) config.ble_enabled=cJSON_IsTrue(ble);
+        if(random) config.ble_random=cJSON_IsTrue(random);
+        config.ble_scan_uuid=scan_uuid;
+        if(peer) std::snprintf(config.ble_peer,sizeof(config.ble_peer),"%s",peer->valuestring);
+    }
+    cJSON_Delete(root);
+    std::printf("Gamepad config: %s /system/config/gamepad.json\n",valid?"loaded":"invalid; ignored");
 }
 void init(bool use_state) {
     flashfat::disk.read=read_system;
@@ -111,6 +161,7 @@ void init(bool use_state) {
         state_mounted=lfs_mount(&lfs,&lc)==0;
         if(state_mounted) load_config();
     }
+    if(use_state && fat_mounted) load_gamepad_config();
     if(!fat_mounted) std::snprintf(error,sizeof(error),"Invalid /system FAT; no format performed");
 }
 bool mounted() {return fat_mounted;}
@@ -179,11 +230,16 @@ bool load(size_t index,const uint8_t *&data,size_t &bytes) {
 }
 bool save() {
     if(!state_ready()) return false;
+    char uuid[7]; std::snprintf(uuid,sizeof(uuid),"0x%04X",config.ble_scan_uuid);
     cJSON *root=cJSON_CreateObject(); if(!root) return false;
     bool ok=cJSON_AddNumberToObject(root,"controller_id",config.controller) &&
         cJSON_AddNumberToObject(root,"brightness",config.brightness) &&
         cJSON_AddBoolToObject(root,"swap_ab",config.swap_ab) &&
         cJSON_AddNumberToObject(root,"menu_sleep_seconds",config.menu_sleep_seconds) &&
+        cJSON_AddBoolToObject(root,"ble_enabled",config.ble_enabled) &&
+        cJSON_AddBoolToObject(root,"ble_random",config.ble_random) &&
+        cJSON_AddStringToObject(root,"ble_peer",config.ble_peer) &&
+        cJSON_AddStringToObject(root,"ble_scan_uuid",uuid) &&
         cJSON_AddStringToObject(root,"last_rom",config.last_rom);
     char *json=ok?cJSON_PrintUnformatted(root):nullptr; cJSON_Delete(root);
     if(!json) return false;

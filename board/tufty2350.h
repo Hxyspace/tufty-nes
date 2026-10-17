@@ -8,6 +8,7 @@
 #define _BOARDS_TUFTY2350_H
 
 pico_board_cmake_set(PICO_PLATFORM, rp2350)
+pico_board_cmake_set(PICO_CYW43_SUPPORTED, 1)
 
 #define PICO_RP2350A 0  // RP2350B (not A)
 
@@ -111,9 +112,7 @@ pico_board_cmake_set_default(PICO_RP2350_A2_SUPPORTED, 1)
 #undef PICO_DEFAULT_LED_PIN
 #define PICO_DEFAULT_LED_PIN BW_LED_0
 
-// Radio wiring is declared here for the later BLE transport. The current
-// firmware leaves WL_ON low and does not link the CYW43/BTstack libraries.
-// The future BLE target must also enable SDK CYW43 support in CMake.
+// CYW43439 radio; USB disk mode leaves WL_ON low.
 #define CYW43_WL_GPIO_COUNT 3
 #define CYW43_DEFAULT_PIN_WL_REG_ON 23u
 #define CYW43_DEFAULT_PIN_WL_DATA_OUT 24u

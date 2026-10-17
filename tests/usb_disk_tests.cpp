@@ -83,6 +83,7 @@ bool pending() {return false;}
 bool command(const char *) {return false;}
 void activity() {}
 }
+namespace ble {bool command(const char *) {return false;}}
 namespace display {
 static uint16_t buffers[2][1];
 uint16_t *menu_buffers[]={buffers[0],buffers[1]};

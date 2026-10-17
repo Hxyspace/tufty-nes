@@ -8,6 +8,10 @@ struct Config {
     uint16_t controller=1;
     uint8_t brightness=80;
     bool swap_ab=false;
+    bool ble_enabled=true;
+    bool ble_random=false;
+    char ble_peer[18]{};
+    uint16_t ble_scan_uuid=0x1812;
     uint32_t menu_sleep_seconds=300;
     char last_rom[256]{};
 };

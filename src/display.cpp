@@ -134,11 +134,12 @@ static void core() {
 void start() {
     std::memset(menus,0,sizeof(menus)); std::memset(games,0,sizeof(games));
     multicore_launch_core1(core);
-    while(!ready.load(std::memory_order_acquire)) {tufty_service(); sleep_ms(1);}
+    while(!ready.load(std::memory_order_acquire)) {tufty_service(); tight_loop_contents();}
 }
 void present_menu(unsigned index) {
     unsigned id=1+(index&1); requested.store(id,std::memory_order_release);
-    while(completed.load(std::memory_order_acquire)!=id) {tufty_service(); sleep_ms(1);}
+    // Keep USB/radio polling while core1 renders; no alarm wake is needed.
+    while(completed.load(std::memory_order_acquire)!=id) {tufty_service(); tight_loop_contents();}
     if(!visible) {visible=true; set_backlight(desired_brightness);}
 }
 bool disk_ready() {

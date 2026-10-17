@@ -1,8 +1,6 @@
 # Tufty NES BLE
 
-运行在 **Pimoroni Tufty 2350** 上的原生 NES 模拟器，支持从 Flash 加载游戏、卡片式游戏菜单、USB 磁盘管理和 PC 串口手柄。
-
-手柄通过 USB CDC 连接，**BLE 支持开发中**。
+运行在 **Pimoroni Tufty 2350** 上的原生 NES 模拟器，支持从 Flash 加载游戏、卡片式游戏菜单、USB 磁盘管理、PC 串口手柄和 BLE HID 八键手柄。
 
 ## 功能
 
@@ -10,6 +8,7 @@
 - 卡片式游戏菜单，支持自定义封面和背景。
 - 双 USB 串口：CDC0 用于 Console，CDC1 用于手柄。
 - Windows 键盘发送器，支持 NES 八键及 TGP v1/v2 协议。
+- BLE HID：适配 Android 手柄的 NES 八键 / XTARK HID 报告，支持 Home 返回菜单、自动扫描和断线重连。
 - USB MSC 磁盘模式，可直接复制和管理游戏文件。
 - 保存屏幕亮度、手柄 ID、按键映射和上次选择的游戏。
 - 支持手动深度休眠和菜单空闲自动休眠，按实体按键唤醒。
@@ -28,7 +27,7 @@
 
 设备需要预先具备兼容的 `/rom`、`/system`、`/state` 文件系统布局。本项目仅生成程序固件，不创建或格式化文件系统；布局与升级注意事项见 [存储说明](docs/storage.md)。
 
-尚不支持 BLE 手柄、声音、第二玩家、游戏存档、NES 2.0 和 VS/PlayChoice。游戏兼容性取决于 InfoNES 的 mapper 支持情况。
+尚不支持声音、第二玩家、游戏存档、NES 2.0 和 VS/PlayChoice。BLE 当前支持 XTARK 九字节报告布局，其他 HID 手柄需单独适配。游戏兼容性取决于 InfoNES 的 mapper 支持情况。
 
 ## 编译与刷入
 
@@ -80,12 +79,16 @@ python tools/serial_gamepad.py
 
 自动识别失败时，用 `--port COM7` 指定 **Gamepad** 串口。设备设置请连接 **Console** 串口，使用 `help` 查看命令。
 
+使用 Android BLE 手柄时，在应用中选择 **NES 八键 → NES 协议 → XTARK HID**，保存并重新开启手柄。Tufty 默认自动扫描连接；在 Console 输入 `ble status` 查看连接和按键状态。详见 [BLE 手柄](docs/usage.md#ble-手柄)。
+
+固定实体手柄 MAC 时，将 [手柄配置示例](examples/gamepad.json) 复制到设备磁盘的 `config/gamepad.json` 并填写地址。安卓与实体手柄使用相同的 HID 服务 UUID `0x1812`；实体 XTARK 的完整兼容性待实机验证。
+
 ## 文档
 
 - [使用指南](docs/usage.md)：串口设置、Console、ROM 工具和菜单素材。
 - [构建指南](docs/building.md)：依赖、补丁、测试和项目结构。
 - [存储说明](docs/storage.md)：Flash 布局、配置保存和固件升级。
-- [手柄协议](docs/gamepad-protocol.md)：TGP 会话和按键帧格式。
+- [手柄协议](docs/gamepad-protocol.md)：TGP 会话、按键帧和 BLE HID 报告格式。
 
 ## 来源与许可
 

@@ -6,6 +6,7 @@
 #include "menu.hpp"
 #include "ines.hpp"
 #include "power.hpp"
+#include "ble.hpp"
 #include "InfoNES.h"
 #include "InfoNES_System.h"
 #include "InfoNES_Mapper.h"
@@ -27,10 +28,16 @@ static const uint8_t *rom_data=nullptr;
 static size_t rom_bytes=0;
 static uint32_t frame_at=0;
 static bool usb_ready=false;
+static bool ble_ready=false;
 void tufty_service() {
     static uint32_t previous=0;
     uint32_t now=time_us_32();
-    if(usb_ready && now-previous>=1000) {previous=now; usb::poll();}
+    static bool servicing=false;
+    if(usb_ready && !servicing && now-previous>=1000) {
+        servicing=true; previous=now; usb::poll();
+        if(ble_ready) ble::poll();
+        servicing=false;
+    }
 }
 void InfoNES_MessageBox(const char *fmt,...) {
     va_list args; va_start(args,fmt); std::vprintf(fmt,args); va_end(args); std::printf("\n");
@@ -66,10 +73,10 @@ static uint8_t local_game() {
 }
 void InfoNES_PadState(DWORD *p1,DWORD *p2,DWORD *system) {
     tufty_service();
-    uint8_t keys=local_game()|usb::pad.buttons;
+    uint8_t keys=local_game()|usb::pad.buttons|ble::buttons();
     if(storage::config.swap_ab) keys=(keys&~3)|((keys&1)<<1)|((keys&2)>>1);
     *p1=keys; *p2=0;
-    *system=(!gpio_get(BTN_HOME) || usb::pad.menu || usb::disk_requested || usb::rescan_requested || power::pending())?PAD_SYS_QUIT:0;
+    *system=(!gpio_get(BTN_HOME) || ble::home() || usb::pad.menu || usb::disk_requested || usb::rescan_requested || power::pending())?PAD_SYS_QUIT:0;
 }
 void InfoNES_SoundInit() {}
 int InfoNES_SoundOpen(int,int) {return 0;}
@@ -89,7 +96,7 @@ int InfoNES_LoadFrame() {
     return 0;
 }
 static uint16_t menu_buttons() {
-    uint16_t keys=usb::pad.buttons;
+    uint16_t keys=usb::pad.buttons|ble::buttons();
     if(!gpio_get(BTN_A) || !gpio_get(BTN_UP)) keys|=tgp::Left;
     if(!gpio_get(BTN_C) || !gpio_get(BTN_DOWN)) keys|=tgp::Right;
     if(!gpio_get(BTN_B)) keys|=tgp::A;
@@ -123,6 +130,8 @@ int main() {
     if(disk) {
         usb::acquire_disk(storage::mounted()); usb::run_disk();
     }
+    ble::init();
+    ble_ready=true;
     storage::scan(); menu::load_art();
     int selected=0;
     for(size_t i=0;i<storage::count;++i) if(!std::strcmp(storage::entries[i].name,storage::config.last_rom)) selected=i;
@@ -146,9 +155,11 @@ int main() {
             selected=storage::count?std::min<int>(selected,storage::count-1):0; position=selected;
         }
         uint16_t keys=menu_buttons();
-        power::idle(keys || !gpio_get(BTN_HOME) || usb::pad.menu);
+        bool home=!gpio_get(BTN_HOME) || ble::home();
+        power::idle(keys || home || usb::pad.menu);
         if(power::pending()) {power::process(); continue;}
-        if(!keys && gpio_get(BTN_HOME)) suppress=false;
+        if(home) suppress=true;
+        else if(!keys) suppress=false;
         uint16_t pressed=suppress?0:keys&~previous; previous=keys;
         if(pressed&(tgp::Left|tgp::Up)) selected=std::max(0,selected-1);
         if(pressed&(tgp::Right|tgp::Down)) selected=std::min<int>(std::max<int>(0,storage::count-1),selected+1);

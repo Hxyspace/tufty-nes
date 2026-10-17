@@ -4,6 +4,7 @@
 #include "display.hpp"
 #include "console.hpp"
 #include "power.hpp"
+#include "ble.hpp"
 #include "disk_ui.hpp"
 #include "disk_activity.hpp"
 #include "hardware/watchdog.h"
@@ -134,10 +135,11 @@ static void command(const char *s) {
     if(power::pending() && std::strcmp(s,"power status")) {
         std::printf("POWER SLEEP: PENDING; command rejected\n"); return;
     }
-    if(power::command(s)) return;
+    if(power::command(s) || ble::command(s)) return;
     if(!std::strcmp(s,"help")) {
         std::printf("help | status | usb disk | bootsel | rescan | save | brightness 1..100 | padid 1..65535 | swapab 0/1\n"
-                    "power status | power sleep [seconds] | power idle 0..86400\n");
+                    "power status | power sleep [seconds] | power idle 0..86400\n"
+                    "ble status | ble on | ble off | ble scan | ble target auto | ble target MAC public|random\n");
     } else if(!std::strcmp(s,"status")) {
         std::printf("FAT=%u sector=%u State=%u ROMs=%u pad=%u packets=%lu rejected=%lu dirty=%u\n",
             storage::mounted(),flashfat::disk.sector_size,storage::state_ready(),unsigned(storage::count),pad.active,

@@ -10,7 +10,7 @@ done
 case "$build_dir" in /*) ;; *) build_dir="$project_dir/$build_dir" ;; esac
 case "$artifact_dir" in /*) ;; *) artifact_dir="$project_dir/$artifact_dir" ;; esac
 jobs="${CMAKE_BUILD_PARALLEL_LEVEL:-4}"
-"$python_bin" -B "$project_dir/tools/deps.py"
+"$python_bin" -B "$project_dir/tools/deps.py" --radio
 sdk_dir="$project_dir/lib/pico-sdk"
 cmake -S "$project_dir/lib/picotool" -B "$build_dir/host/picotool" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release "-DPICO_SDK_PATH=$sdk_dir" \
