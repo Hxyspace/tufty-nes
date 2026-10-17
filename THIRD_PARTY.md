@@ -4,7 +4,7 @@
 
 | 内容 | 来源 | 本项目使用方式 |
 |---|---|---|
-| InfoNES、NES mapper、FatFs R0.14b | [lalomorales22/tufty-nes](https://github.com/lalomorales22/tufty-nes)，基于 xrip/pico-nes、InfoNES | 锁定 `799ecf25022d5216773c8b80fcf995950aa70f4e`，仅两个接入补丁；上游 `pico-nes/LICENSE` 及 FatFs 源码内声明保留 |
+| InfoNES、NES mapper、FatFs R0.14b | [lalomorales22/tufty-nes](https://github.com/lalomorales22/tufty-nes)，基于 xrip/pico-nes、InfoNES | 锁定 `799ecf25022d5216773c8b80fcf995950aa70f4e`，应用接入及 PPU/mapper 48 修正补丁；上游 `pico-nes/LICENSE` 及 FatFs 源码内声明保留 |
 | Pico SDK 2.3.0、TinyUSB | Raspberry Pi、TinyUSB 作者 | 锁文件下载；TinyUSB 由 SDK 的 gitlink 定版，按各自 BSD/MIT 许可分发 |
 | picotool | Raspberry Pi | 锁文件下载，BSD-3-Clause，作为宿主构建工具 |
 | LittleFS 2.11.3 | littlefs-project | 锁文件下载，BSD-3-Clause |

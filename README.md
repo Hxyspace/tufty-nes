@@ -4,7 +4,7 @@
 
 ## 功能
 
-- 从 `/system/roms/` 加载标准 iNES 1.0 游戏，无需将 ROM 编译进固件。
+- 从 `/system/roms/` 加载 iNES 1.0 和兼容的 NES 2.0 游戏，无需将 ROM 编译进固件。
 - 卡片式游戏菜单，支持自定义封面和背景。
 - 双 USB 串口：CDC0 用于 Console，CDC1 用于手柄。
 - Windows 键盘发送器，支持 NES 八键及 TGP v1/v2 协议。
@@ -22,12 +22,12 @@
 | MCU | RP2350B |
 | 存储 | 16 MiB Flash、8 MiB PSRAM |
 | 屏幕 | 320 × 240 ST7789 |
-| 游戏格式 | iNES 1.0，最多 4 MiB/文件 |
+| 游戏格式 | iNES 1.0、部分 NES 2.0，最多 4 MiB/文件 |
 | PC 手柄工具 | Windows、Python 3、pyserial |
 
 设备需要预先具备兼容的 `/rom`、`/system`、`/state` 文件系统布局。本项目仅生成程序固件，不创建或格式化文件系统；布局与升级注意事项见 [存储说明](docs/storage.md)。
 
-尚不支持声音、第二玩家、游戏存档、NES 2.0 和 VS/PlayChoice。BLE 当前支持 XTARK 九字节报告布局，其他 HID 手柄需单独适配。游戏兼容性取决于 InfoNES 的 mapper 支持情况。
+尚不支持声音、第二玩家、游戏存档和 VS/PlayChoice。NES 2.0 支持范围见 [游戏文件要求](docs/usage.md#管理游戏)，游戏兼容性取决于 InfoNES 的 mapper 实现。BLE 当前支持 XTARK 九字节报告布局，其他 HID 手柄需单独适配。
 
 ## 编译与刷入
 

@@ -1,0 +1,80 @@
+--- a/pico-nes/infones/InfoNES.cpp
++++ b/pico-nes/infones/InfoNES.cpp
+@@ -725,13 +725,9 @@
+   if (FrameCnt == 0 &&
+       PPU_ScanTable[PPU_Scanline] == SCAN_ON_SCREEN)
+   {
+-    if (PPU_Scanline >= 4 && PPU_Scanline < 240 - 4)
+-    {
+-      InfoNES_PreDrawLine(PPU_Scanline);
+-      InfoNES_DrawLine();
+-      InfoNES_PostDrawLine(PPU_Scanline);
+-    }
+-    // todo: 描画しないラインにもスプライトオーバーレジスタとかは反映する必要がある
++    InfoNES_PreDrawLine(PPU_Scanline);
++    InfoNES_DrawLine();
++    InfoNES_PostDrawLine(PPU_Scanline);
+   }
+ 
+ 
+@@ -932,7 +928,9 @@
+   // Clear a scanline if screen is off
+   if (!(PPU_R1 & R1_SHOW_SCR))
+   {
+-    InfoNES_MemorySet(pPoint, 0, NES_DISP_WIDTH << 1);
++    // Use the universal background color, preserving its transparent BG tag.
++    for (int x = 0; x < NES_DISP_WIDTH; ++x)
++      pPoint[x] = PalTable[0];
+   }
+   else
+   {
+@@ -1182,7 +1180,8 @@
+ 
+       // pPointTop = &WorkFrame[PPU_Scanline * NES_DISP_WIDTH];
+       pPointTop = WorkLine;
+-      InfoNES_MemorySet(pPointTop, 0, 8 << 1);
++      for (int x = 0; x < 8; ++x)
++        pPointTop[x] = PalTable[0];
+     }
+ 
+     /*-------------------------------------------------------------------*/
+@@ -1195,7 +1194,8 @@
+ 
+       // pPointTop = &WorkFrame[PPU_Scanline * NES_DISP_WIDTH];
+       pPointTop = WorkLine;
+-      InfoNES_MemorySet(pPointTop, 0, NES_DISP_WIDTH << 1);
++      for (int x = 0; x < NES_DISP_WIDTH; ++x)
++        pPointTop[x] = PalTable[0];
+     }
+   }
+ 
+@@ -1406,6 +1406,10 @@
+ #endif
+     }
+ 
++    // Mask only sprite pixels; the background has its own left-edge mask.
++    if (!(PPU_R1 & R1_CLIP_SP))
++      InfoNES_MemorySet(pSprBuf, 0, 8);
++
+     // Rendering sprite
+     pPoint = WorkLine;
+     //   pPoint -= (NES_DISP_WIDTH - PPU_Scr_H_Bit);
+@@ -1445,18 +1449,6 @@
+       }
+     }
+ #endif
+-
+-    /*-------------------------------------------------------------------*/
+-    /*  Sprite Clipping                                                  */
+-    /*-------------------------------------------------------------------*/
+-    if (!(PPU_R1 & R1_CLIP_SP))
+-    {
+-      WORD *pPointTop;
+-
+-      // pPointTop = &WorkFrame[PPU_Scanline * NES_DISP_WIDTH];
+-      pPointTop = WorkLine;
+-      InfoNES_MemorySet(pPointTop, 0, 8 << 1);
+-    }
+ 
+     if (nSprCnt >= 8)
+       PPU_R2 |= R2_MAX_SP; // Set a flag of maximum sprites on scanline

@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cstring>
 #include <string>
+#include <utility>
 #include <vector>
 static std::string output;
 static bool send(const char *s,size_t n) {output.append(s,n); return true;}
@@ -43,5 +44,33 @@ int main() {
     rom[5]=0; assert(ines::inspect(rom.data(),rom.size(),image) && !image.chr);
     rom[6]=4; assert(!ines::inspect(rom.data(),16+16384,image));
     assert(ines::inspect(rom.data(),rom.size(),image) && image.offset==528);
-    rom[7]=8; assert(!ines::inspect(rom.data(),rom.size(),image));
+    rom[7]=8; rom[15]=1;
+    assert(ines::inspect(rom.data(),rom.size(),image) && image.offset==528);
+    assert(image.header[7]==0 && image.header[15]==0 && rom[7]==8 && rom[15]==1);
+    // NES2 metadata must never be silently reinterpreted as a legacy ROM.
+    const std::pair<unsigned,uint8_t> unsupported[]={
+        {8,0x20},{8,1},{9,1},{9,0x0f},{9,0xf0}, // submapper, mapper, sizes/exponent
+        {10,8},{10,0x80},{10,0x77},{11,8},{11,0x80},{11,0x77},
+        {12,1},{12,2},{12,3},{13,1},{14,1},{15,2},{15,0x40},{7,9},{7,10},{7,11}
+    };
+    for(auto field:unsupported) {
+        auto invalid=rom; invalid[field.first]=field.second;
+        const char *error=nullptr;
+        assert(!ines::inspect(invalid.data(),invalid.size(),image,&error) && error);
+    }
+    const char *error=nullptr;
+    assert(!ines::inspect(nullptr,0,image,&error) && error);
+    rom[6]=0x57; rom[7]=0x48; rom[5]=1; // Mapper 69, trainer/battery/mirroring.
+    rom.resize(528+16384+8192);
+    assert(ines::inspect(rom.data(),rom.size(),image,&error) && !error);
+    assert(image.mapper==69 && image.prg==16384 && image.chr==8192 && image.offset==528);
+    assert(image.header[6]==0x57 && image.header[7]==0x40);
+    for(unsigned i=8;i<16;++i) assert(image.header[i]==0);
+    for(size_t n=0;n<rom.size();++n) assert(!ines::inspect(rom.data(),n,image));
+    rom[11]=7; assert(!ines::inspect(rom.data(),rom.size(),image)); // Mixed CHR ROM/RAM.
+    rom[5]=0;
+    assert(ines::inspect(rom.data(),rom.size(),image)); // Standard 8 KiB CHR-RAM.
+    rom[10]=7; assert(ines::inspect(rom.data(),rom.size(),image));
+    rom[10]=0x70; assert(ines::inspect(rom.data(),rom.size(),image));
+    rom[4]=0; assert(!ines::inspect(rom.data(),rom.size(),image));
 }

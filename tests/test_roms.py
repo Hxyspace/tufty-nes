@@ -57,13 +57,48 @@ class RomTests(unittest.TestCase):
             result = review(data, self.rules, {2})
             self.assertTrue(result.error)
             self.assertEqual(result.fixed, data)
-        for flag in (8, 1, 2):  # NES2, VS, PlayChoice
+        for flag in (1, 2):  # VS, PlayChoice
             data = bytearray(self.data)
             data[7] = flag
             result = review(bytes(data), self.rules, {2})
             self.assertTrue(result.error)
             self.assertEqual(result.fixed, data)
         self.assertTrue(review(self.data, {}, {0, 1, 2}).error)
+
+    def test_nes2_preserves_format_and_payload(self):
+        data = bytearray(self.data)
+        data[7] |= 8
+        data[15] = 1
+        result = review(bytes(data), {}, {67})
+        self.assertFalse(result.error)
+        self.assertEqual(result.fixed, data)
+        self.assertFalse(any("reserved" in n for n in result.notes))
+        fixed = review(bytes(data), self.rules, {2})
+        self.assertFalse(fixed.error)
+        self.assertEqual(fixed.fixed[6:8], b"\x26\x08")
+        self.assertEqual(fixed.fixed[8:], data[8:])
+        self.assertTrue(review(bytes(data[:-1]), {}, {67}).error)
+        self.assertTrue(review(bytes(data), {}, {0}).error)
+
+    def test_nes2_rejects_unrepresentable_metadata(self):
+        data = bytearray(self.data)
+        data[7] |= 8
+        data[15] = 1
+        for index, value in ((8, 0x20), (8, 1), (9, 1), (9, 15), (9, 0xF0),
+                             (10, 8), (10, 0x80), (10, 0x77),
+                             (11, 7), (11, 8), (11, 0x80), (11, 0x77),
+                             (12, 1), (12, 2), (12, 3), (13, 1), (14, 1), (15, 2), (15, 64)):
+            with self.subTest(index=index, value=value):
+                invalid = bytearray(data)
+                invalid[index] = value
+                result = review(bytes(invalid), self.rules, {2, 67})
+                self.assertTrue(result.error)
+                self.assertEqual(result.fixed, invalid)
+        data[5] = 0
+        data[11] = 7
+        for ram in (0, 7, 0x70):
+            data[10] = ram
+            self.assertFalse(review(bytes(data), {}, {67}).error)
 
     def test_backup_and_repeat_are_lossless(self):
         with tempfile.TemporaryDirectory() as tmp:

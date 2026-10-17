@@ -53,8 +53,25 @@ def review(data, rules, mappers, trim_padding=False):
     result = Review(data)
     if len(data) < 16 or data[:4] != b"NES\x1a":
         return Review(data, ["ERROR: missing/truncated iNES header"], True)
-    if data[7] & 0x0C == 0x08:
-        return Review(data, ["ERROR: NES 2.0 is not supported by this firmware; unchanged"], True)
+    nes2 = data[7] & 0x0C == 0x08
+    if nes2:
+        # Match src/ines.hpp: accept only metadata the existing core can represent.
+        ram = lambda value: sum(64 << n if n else 0 for n in (value & 15, value >> 4))
+        reason = None
+        if data[8] & 0xF0:
+            reason = "submapper is unsupported"
+        elif data[8] & 15:
+            reason = "extended mapper is unsupported"
+        elif data[9]:
+            reason = "extended ROM sizes are unsupported"
+        elif ram(data[10]) > 8192 or ram(data[11]) > 8192 or (data[5] and data[11]):
+            reason = "RAM layout is unsupported"
+        elif data[12]:
+            reason = "requires NTSC timing"
+        elif data[13] or data[14] or data[15] > 1:
+            reason = "extra hardware/data is unsupported"
+        if reason:
+            return Review(data, [f"ERROR: NES 2.0 {reason}; unchanged"], True)
     if data[7] & 3 or not data[4]:
         return Review(data, ["ERROR: firmware requires standard NES and nonempty PRG; unchanged"], True)
     prg, chr_size = data[4] * 16384, data[5] * 8192
@@ -66,7 +83,7 @@ def review(data, rules, mappers, trim_padding=False):
     crc = f"{zlib.crc32(payload):08x}"
     mapper = (data[6] >> 4) | (data[7] & 0xF0)
     mirror = "four-screen" if data[6] & 8 else "vertical" if data[6] & 1 else "horizontal"
-    result.notes.append(f"CRC32={crc} mapper={mapper} mirroring={mirror} PRG={prg} CHR={chr_size}")
+    result.notes.append(f"{'NES 2.0' if nes2 else 'iNES 1.0'} CRC32={crc} mapper={mapper} mirroring={mirror} PRG={prg} CHR={chr_size}")
     fixed = bytearray(data)
     rule = rules.get(crc)
     if rule:
@@ -91,7 +108,7 @@ def review(data, rules, mappers, trim_padding=False):
     if mapper not in mappers:
         result.notes.append(f"ERROR: mapper {mapper} is absent from firmware MapperTable")
         result.error = True
-    if any(data[12:16]):
+    if not nes2 and any(data[12:16]):
         result.notes.append("WARN: reserved header bytes are nonzero; no automatic cleanup")
     if len(data) > end:
         tail = data[end:]

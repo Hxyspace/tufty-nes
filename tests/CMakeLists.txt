@@ -25,6 +25,12 @@ include_directories(${runtime} ${root}/config ${upstream}/drivers/fatfs
   ${root}/lib/littlefs ${root}/lib/cjson ${CMAKE_CURRENT_LIST_DIR}/stubs)
 add_executable(protocol_tests protocol_tests.cpp ${runtime}/protocol.cpp)
 add_test(NAME protocol COMMAND protocol_tests)
+add_executable(ppu_tests ppu_tests.cpp ${upstream}/infones/InfoNES.cpp)
+target_include_directories(ppu_tests BEFORE PRIVATE ${CMAKE_CURRENT_LIST_DIR}/core_stubs ${upstream}/infones)
+# Upstream CPU/save-state code is not needed for these PPU/mapper tests.
+target_compile_options(ppu_tests PRIVATE -ffunction-sections -fdata-sections)
+target_link_options(ppu_tests PRIVATE -Wl,--gc-sections)
+add_test(NAME ppu_mapper48 COMMAND ppu_tests)
 set(btstack ${root}/lib/pico-sdk/lib/btstack)
 add_executable(ble_tests ble_tests.cpp ${runtime}/ble.cpp ${runtime}/hid_gamepad.cpp
   ${btstack}/src/btstack_hid_parser.c ${btstack}/src/btstack_util.c ${btstack}/src/ad_parser.c)

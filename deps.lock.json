@@ -6,7 +6,9 @@
       "commit": "799ecf25022d5216773c8b80fcf995950aa70f4e",
       "patches": [
         "patch/tufty-nes/0001-platform-poll-hook.patch",
-        "patch/tufty-nes/0002-external-fatfs-config.patch"
+        "patch/tufty-nes/0002-external-fatfs-config.patch",
+        "patch/tufty-nes/0003-ppu-visible-lines-and-clipping.patch",
+        "patch/tufty-nes/0004-mapper48-1k-chr-banks.patch"
       ]
     },
     "pico-sdk": {

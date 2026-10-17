@@ -1,0 +1,29 @@
+--- a/pico-nes/infones/mapper/InfoNES_Mapper_048.cpp
++++ b/pico-nes/infones/mapper/InfoNES_Mapper_048.cpp
+@@ -107,22 +107,22 @@
+       break;
+ 
+     case 0xa000:
+-      PPUBANK[ 4 ] = VROMPAGE( ( ( byData << 1 ) + 0 ) % ( NesHeader.byVRomSize << 3 ) );
++      PPUBANK[ 4 ] = VROMPAGE( byData % ( NesHeader.byVRomSize << 3 ) );
+       InfoNES_SetupChr();
+       break;
+ 
+     case 0xa001:
+-      PPUBANK[ 5 ] = VROMPAGE( ( ( byData << 1 ) + 0 ) % ( NesHeader.byVRomSize << 3 ) );
++      PPUBANK[ 5 ] = VROMPAGE( byData % ( NesHeader.byVRomSize << 3 ) );
+       InfoNES_SetupChr();
+       break;
+ 
+     case 0xa002:
+-      PPUBANK[ 6 ] = VROMPAGE( ( ( byData << 1 ) + 0 ) % ( NesHeader.byVRomSize << 3 ) );
++      PPUBANK[ 6 ] = VROMPAGE( byData % ( NesHeader.byVRomSize << 3 ) );
+       InfoNES_SetupChr();
+       break;
+ 
+     case 0xa003:
+-      PPUBANK[ 7 ] = VROMPAGE( ( ( byData << 1 ) + 0 ) % ( NesHeader.byVRomSize << 3 ) );
++      PPUBANK[ 7 ] = VROMPAGE( byData % ( NesHeader.byVRomSize << 3 ) );
+       InfoNES_SetupChr();
+       break;
+ 

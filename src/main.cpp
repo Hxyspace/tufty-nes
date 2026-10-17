@@ -53,13 +53,12 @@ int InfoNES_Menu() {return 1;}
 int InfoNES_Video() {
     ines::Image image;
     ROM=VROM=nullptr;
-    if(!ines::inspect(rom_data,rom_bytes,image)) {InfoNES_Error("Invalid/truncated iNES 1.0 ROM"); return 1;}
+    const char *error=nullptr;
+    if(!ines::inspect(rom_data,rom_bytes,image,&error)) {InfoNES_Error("%s",error); return 1;}
     bool supported=false;
     for(int i=0;MapperTable[i].nMapperNo!=-1;++i) if(MapperTable[i].nMapperNo==image.mapper) supported=true;
     if(!supported) {InfoNES_Error("Mapper %u is unsupported",image.mapper); return 1;}
-    std::memcpy(&NesHeader,rom_data,sizeof(NesHeader));
-    // Make mapper decoding agree with the validated iNES header.
-    std::memset(NesHeader.byReserve,0,sizeof(NesHeader.byReserve));
+    std::memcpy(&NesHeader,image.header,sizeof(NesHeader));
     std::memset(SRAM,0,SRAM_SIZE);
     if(NesHeader.byInfo1&4) std::memcpy(SRAM+0x1000,rom_data+16,512);
     ROM=const_cast<BYTE *>(rom_data+image.offset);
