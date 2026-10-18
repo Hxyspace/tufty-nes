@@ -39,7 +39,8 @@ target_compile_definitions(ble_tests PRIVATE ENABLE_BLE=1)
 add_test(NAME ble_hid COMMAND ble_tests)
 foreach(scenario sync_cancel sync_disconnect lost_cancel startup_timeout recovery_off home scan_uuid
     cancel_stale_scan cancel_late_success connect_failed request_failed
-    idle_link disconnect_timeout)
+    idle_link disconnect_timeout pairing_failure physical_layout
+    left_stick home_combo remote_close)
   add_test(NAME ble_${scenario} COMMAND ble_tests ${scenario})
 endforeach()
 add_executable(console_tests console_tests.cpp)

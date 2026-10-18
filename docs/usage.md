@@ -36,7 +36,7 @@ Console 设置：115200 波特率、关闭本地回显、启用 DTR。连接后�
 | `ble target auto` | 自动选择广播 HID 服务且报告布局兼容的设备 |
 | `ble target MAC public` | 指定 public 地址目标 |
 | `ble target MAC random` | 指定 random 地址目标 |
-| `ble trace on` / `ble trace off` | 开关 Report Map 和原始输入报告日志，默认关闭 |
+| `ble trace on` / `ble trace off` | 开关 HID 描述符诊断，默认关闭 |
 
 修改设置后执行 `save`。启动不同游戏、通过命令进入磁盘模式前也会保存配置；保存失败时会显示错误。`usb disk`、`bootsel` 会先回复状态再切换。
 
@@ -81,48 +81,38 @@ python3 tools/serial_gamepad.py --port /dev/ttyACM1 --buttons 0x80 --seconds 3
 
 ## BLE 手柄
 
-Tufty 作为 BLE Central 接收 HID 输入，默认自动扫描广播 `0x1812` 服务的设备。当前适配 Android 手柄的 **NES 八键 / XTARK HID** 九字节报告；TGP v1/v2 的 BLE 模式及其他 HID 布局暂不支持。
+支持已适配的 XTARK 实体手柄，以及安卓手柄应用的 NES / XTARK HID 模式。
 
-1. Android 应用中进入 **设置 → NES 八键 → NES 协议**，选择 **XTARK HID**，保存并重新开启手柄。
-2. 等待 Tufty 自动连接。在 Console 输入 `ble status`，`state=READY` 表示 HID 发现完成；按键时 `buttons` 和 `reports` 应变化。
-3. 用方向键切换游戏、A 启动；游戏内提供方向、A/B、Select/Start。返回菜单使用 Tufty 实体 Home 或 BLE 手柄的 [Home](gamepad-protocol.md#home-返回菜单)。
+1. 开启实体手柄，或在安卓应用中选择 NES / XTARK HID 模式并点“开启手柄”。
+2. Tufty 默认自动扫描连接。Console 输入 `ble status`，显示 `state=READY` 表示手柄就绪。
+3. 十字键或左摇杆控制方向，A 启动游戏；游戏中使用 A/B、Select/Start。十字键优先于摇杆，右摇杆和肩键不映射 NES 操作。
+4. 返回菜单时，将两个摇杆回中，松开其他按键及扳机，同时按下左右摇杆（L3+R3）并保持 **1.5 秒**。触发后松开两个摇杆按键，再进行下一步操作。安卓可直接使用 Home，也可按 Tufty 自身的 Home。
 
-连接日志包含扫描得到的 MAC 和地址类型。附近有多个 HID 设备时可限定目标，例如：
+实体 XTARK 的 Home 键在当前模式下不发送游戏输入，使用上述组合键即可。串口、BLE 和 Tufty 自身按键可以同时使用；`swapab` 对合并后的 NES A/B 生效。
+
+### 连接设置
+
+附近有多个 HID 设备时，可通过 Console 固定实体手柄地址。连接日志会显示 MAC 和地址类型：
 
 ```text
 ble target AA:BB:CC:DD:EE:FF public
 save
 ```
 
-Android 广播地址可能变化，通常保持 `ble target auto`。BLE 不使用串口手柄的 `padid`。串口、BLE 和实体按键可同时使用，按键合并；`swapab` 对合并后的 NES A/B 生效。
-
-需要通过文件固定原手柄 MAC，或设置扫描 UUID 时，将 [examples/gamepad.json](../examples/gamepad.json) 复制到 USB 磁盘的 `config/gamepad.json`。字段及配置优先级见 [存储说明](storage.md#从-usb-磁盘配置手柄)。`0x1812` 是标准 HID 服务 UUID，安卓和实体手柄共用；HID Report ID（日志中的 `report`）用于区分报告类型，不标识哪只手柄。
-
-`ble status` 中按下 Home 时 `home=1`。返回菜单后需松开 Home 和其他按键，才能再次用 A 启动游戏。旧版八键手柄无需修改。
-
-断连时立即释放 BLE 按键并自动重扫。连接失败或连接超时后会自动重启无线控制器，再重新扫描，无需手动 `ble off` / `ble on`；正常等待手柄时不会反复重启。启动或取消连接无响应时也会自动恢复。连接存在时，实体 HID 可只在状态变化时通知，不要求发送串口协议的心跳。空闲的中立报告不会延后菜单自动休眠，持续按键会延后。休眠会关闭无线，按 BLE 手柄不能唤醒 Tufty。
-
-连接就绪后不进行后台 GATT 存活检查，也不因按键静默而主动断开。手机只关闭“手柄”功能、底层蓝牙连接仍在时，Tufty 保持当前连接；重新开启手柄可能需要先关闭再打开手机系统蓝牙，或在 Tufty 执行 `ble scan`。收到实际蓝牙断开事件后，Tufty 立即释放按键并重新扫描。
-
-连接超时的恢复日志为 `CONNECT TIMEOUT` → `CONNECT CANCELLED` → `RECOVER ... restarting controller` → `SCANNING HID`；取消回调缺失时会由超时保护进入恢复。`BLE SCAN` 行的 `reports` 是本轮扫描收到的广播数，`candidates` 是通过 UUID/MAC 筛选并尝试连接的数量。一直没有广播时，可结合手机广播状态排查。
-
-### 验证实体 XTARK 手柄
-
-原手柄接收库提供九字节按键偏移，但未附其实际 Report Map。本固件按该布局适配，实体设备的描述符、订阅和按键仍需实测确认。
-
-在配置文件中填入自己的手柄 MAC 和 public 地址类型，重启并开启手柄。诊断时可在 Console 执行：
+安卓地址可能变化，建议使用自动连接：
 
 ```text
-ble trace on
-ble scan
-ble status
+ble target auto
+save
 ```
 
-连接日志按 `CONNECTING` → `READY` 检查。`BLE PEER` 显示实际 MAC、地址类型、HID 服务索引及 Report ID；按键时 `reports` 应增加，`buttons` 应与方向、A/B、Select/Start 对应。还应测试松键、持续长按和关闭再开启手柄。
+也可将 [手柄配置示例](../examples/gamepad.json) 复制到设备磁盘的 `config/gamepad.json`，填写自己的手柄 MAC。字段及优先级见 [存储说明](storage.md#从-usb-磁盘配置手柄)。BLE 不使用串口手柄的 `padid`。
 
-若出现 `HID FAILED` 或 `INCOMPATIBLE REPORT MAP`，保留前面的 `REPORT MAP` 和状态日志；若能 `READY` 但按键异常，保留 `REPORT` 日志。诊断中的输入 `data` 含 BTstack 补入的 Report ID，正常九字节 GATT 报告在此会显示为十字节。实体 Home 的键位也需检查原始报告确认。完成后执行 `ble trace off` 关闭逐帧输出。
+断连后会自动等待重连。安卓点“关闭手柄”后 Tufty 会断开并继续扫描，重新开启即可连接，无需关闭手机系统蓝牙。长时间不操作不会触发 BLE 超时重连；游戏与菜单空闲休眠规则仍然生效。休眠会关闭无线，需要用 Tufty 实体按键唤醒。USB 磁盘模式不启用手柄连接。
 
-使用 `ble off` 停止扫描和连接；需要时用 `ble on` 恢复，执行 `save` 保存开关和目标设置。USB 磁盘模式不启动无线。
+需要重新连接时使用 `ble scan`；`ble off` / `ble on` 关闭或启用 BLE，执行 `save` 保存开关和目标设置。若无法连接，先检查目标地址和安卓模式，再用 `ble status` 查看状态。`ble trace on` 后执行 `ble scan` 可获取 HID 描述符诊断，完成后用 `ble trace off` 关闭。
+
+当前仅支持 XTARK 十字节 HID 布局，旧版安卓九字节格式及其他 HID 手柄需单独适配。串口与 BLE 接入约定见 [手柄协议](gamepad-protocol.md)，安卓发送端实现细节见安卓手柄项目的 `docs/hid-protocol.md`。
 
 ## 管理游戏
 

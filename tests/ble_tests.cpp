@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstring>
+#include <cstdio>
 #include <vector>
 
 namespace {
@@ -20,30 +21,27 @@ uint32_t poll_delay=0;
 unsigned inits=0,polls=0,deinits=0,scans=0,connects=0,disconnects=0,cancels=0,reads=0,activity=0;
 unsigned off=0,on=0;
 uint8_t connect_result=0,discovery_result=0;
-btstack_packet_handler_t hci_handler=nullptr,hid_handler=nullptr;
+uint8_t last_read_id=0;
+btstack_packet_handler_t hci_handler=nullptr,hid_handler=nullptr,sm_handler=nullptr;
 bd_addr_t connected_peer{};
 bd_addr_type_t connected_type=BD_ADDR_TYPE_UNKNOWN;
+// Captured from the physical XTARK controller, including its consumer report 3
+// and ten-byte gamepad report 4. Keep the real descriptor as a regression case.
 constexpr uint8_t map[]={
-    0x05,0x01,0x09,0x05,0xa1,0x01,0x85,0x01,
-    0x15,0x00,0x26,0xff,0x00,0x75,0x08,0x95,0x04,
-    0x09,0x30,0x09,0x31,0x09,0x32,0x09,0x35,0x81,0x03,
-    0x25,0x07,0x95,0x01,0x09,0x39,0x81,0x42,
-    0x05,0x09,0x25,0x01,0x75,0x01,0x95,0x02,
-    0x09,0x01,0x09,0x02,0x81,0x02,
-    0x95,0x06,0x81,0x03,0x95,0x02,0x81,0x03,
-    0x09,0x09,0x09,0x0a,0x81,0x02,0x95,0x04,0x81,0x03,
-    0x75,0x08,0x95,0x02,0x81,0x03,0xc0};
+    0x05,0x0c,0x09,0x01,0xa1,0x01,0x85,0x03,0x75,0x10,0x95,0x01,
+    0x15,0x01,0x26,0x9c,0x02,0x19,0x01,0x2a,0x9c,0x02,0x81,0x00,0xc0,
+    0x05,0x01,0x09,0x05,0xa1,0x01,0x85,0x04,0x09,0x01,0xa1,0x00,
+    0x09,0x30,0x09,0x31,0x09,0x32,0x09,0x35,0x15,0x00,0x26,0xff,0x00,
+    0x75,0x08,0x95,0x04,0x81,0x02,0xc0,0x09,0x39,0x15,0x00,0x25,0x07,
+    0x35,0x00,0x46,0x3b,0x01,0x65,0x14,0x75,0x04,0x95,0x01,0x81,0x42,
+    0x75,0x04,0x95,0x01,0x81,0x01,0x05,0x09,0x19,0x01,0x29,0x10,
+    0x15,0x00,0x25,0x01,0x75,0x01,0x95,0x10,0x81,0x02,0x05,0x02,
+    0x15,0x00,0x26,0xff,0x00,0x09,0xc4,0x09,0xc5,0x95,0x02,0x75,0x08,
+    0x81,0x02,0x75,0x08,0x95,0x01,0x81,0x01,0xc0};
+static_assert(sizeof(map)==122);
 constexpr uint8_t keyboard_map[]={0x05,0x01,0x09,0x06,0xa1,0x01,
     0x75,0x08,0x95,0x09,0x09,0x30,0x81,0x02,0xc0};
-std::vector<uint8_t> optional_home_map;
-void home_map() {
-    optional_home_map.assign(std::begin(map),std::end(map)-17);
-    // Android's XTARK layout: Button 9/10/13 are Select/Start/Home.
-    optional_home_map.insert(optional_home_map.end(),{
-        0x95,0x03,0x09,0x09,0x09,0x0a,0x09,0x0d,0x81,0x02,
-        0x95,0x03,0x81,0x03,
-        0x75,0x08,0x95,0x02,0x81,0x03,0xc0});
-}
+std::vector<uint8_t> descriptor_override;
 void event(std::vector<uint8_t> packet) {
     if(packet[0]==BTSTACK_EVENT_STATE) radio_state=static_cast<HCI_STATE>(packet[2]);
     assert(hci_handler); hci_handler(HCI_EVENT_PACKET,0,packet.data(),packet.size());
@@ -64,11 +62,22 @@ void linked(uint8_t status=0) {
 void ready(uint8_t status=0) {
     hid({HCI_EVENT_GATTSERVICE_META,6,GATTSERVICE_SUBEVENT_HID_SERVICE_CONNECTED,7,0,status,1,1});
 }
+void sample(std::initializer_list<uint8_t> data) {
+    std::vector<uint8_t> packet={HCI_EVENT_GATTSERVICE_META,0,GATTSERVICE_SUBEVENT_HID_REPORT,7,0,0,4,
+        uint8_t(data.size()+1),0,4};
+    packet.insert(packet.end(),data); packet[1]=packet.size()-2;
+    hid(packet);
+}
 void report(uint8_t hat,uint8_t ab=0,uint8_t menu=0) {
-    hid({HCI_EVENT_GATTSERVICE_META,17,GATTSERVICE_SUBEVENT_HID_REPORT,7,0,0,1,10,0,
-         1,0x80,0x80,0x80,0x80,hat,ab,menu,0,0});
+    sample({0x80,0x80,0x80,0x80,hat,ab,menu,0,0,0});
 }
 void disconnected() {event({HCI_EVENT_DISCONNECTION_COMPLETE,4,0,0x40,0,0x13});}
+void pairing(uint8_t status,uint8_t reason) {
+    std::vector<uint8_t> packet(14);
+    packet[0]=SM_EVENT_PAIRING_COMPLETE; packet[1]=12; packet[2]=0x40;
+    packet[11]=status; packet[12]=reason;
+    assert(sm_handler); sm_handler(HCI_EVENT_PACKET,0,packet.data(),packet.size());
+}
 void advance(uint32_t ms) {clock_ms+=ms; ble::poll();}
 void finish_restart() {
     unsigned previous_scans=scans,previous_on=on;
@@ -91,7 +100,7 @@ namespace power {void activity() {++::activity;}}
 extern "C" {
 void btstack_assert_failed(const char *,uint16_t) {assert(false);}
 void hci_add_event_handler(btstack_packet_callback_registration_t *r) {hci_handler=r->callback;}
-void sm_add_event_handler(btstack_packet_callback_registration_t *) {}
+void sm_add_event_handler(btstack_packet_callback_registration_t *r) {sm_handler=r->callback;}
 int hci_power_control(HCI_POWER_MODE mode) {
     if(mode==HCI_POWER_ON) {++on; radio_state=HCI_STATE_INITIALIZING; scan_blocked=false;}
     else {++off; radio_state=silent_power_off?HCI_STATE_OFF:HCI_STATE_HALTING;}
@@ -102,6 +111,7 @@ void l2cap_init() {}
 void sm_init() {}
 void gatt_client_init() {}
 void sm_set_io_capabilities(io_capability_t) {}
+void sm_set_secure_connections_only_mode(bool) {}
 void sm_set_authentication_requirements(uint8_t) {}
 void sm_just_works_confirm(hci_con_handle_t) {}
 void hids_host_init(uint8_t *,uint16_t) {}
@@ -126,17 +136,121 @@ uint8_t gap_disconnect(hci_con_handle_t) {
 uint8_t hids_host_connect(hci_con_handle_t,btstack_packet_handler_t callback,hid_protocol_mode_t,uint16_t *cid) {
     hid_handler=callback; *cid=7; return discovery_result;
 }
-uint8_t hids_host_send_get_report(uint16_t,uint8_t,hid_report_type_t) {++reads; return 0;}
+uint8_t hids_host_send_get_report(uint16_t,uint8_t id,hid_report_type_t) {++reads; last_read_id=id; return 0;}
 const uint8_t *hids_host_descriptor_storage_get_descriptor_data(uint16_t,uint8_t) {
-    return !valid_map?keyboard_map:optional_home_map.empty()?map:optional_home_map.data();
+    return !valid_map?keyboard_map:descriptor_override.empty()?map:descriptor_override.data();
 }
 uint16_t hids_host_descriptor_storage_get_descriptor_len(uint16_t,uint8_t) {
-    return !valid_map?sizeof(keyboard_map):optional_home_map.empty()?sizeof(map):optional_home_map.size();
+    return !valid_map?sizeof(keyboard_map):descriptor_override.empty()?sizeof(map):descriptor_override.size();
 }
 }
 int main(int argc,char **argv) {
     if(argc==2) {
         ble::init(); assert(inits==1 && on==1);
+        if(!std::strcmp(argv[1],"left_stick")) {
+            event({BTSTACK_EVENT_STATE,1,HCI_STATE_WORKING}); advertise(); linked(); ready();
+            sample({80,128,128,128,255,1,0,0,0,0}); assert(ble::buttons()==(tgp::Left|tgp::A));
+            sample({90,128,128,128,255,0,0,0,0,0}); assert(ble::buttons()==tgp::Left);
+            sample({96,128,128,128,255,0,0,0,0,0}); assert(!ble::buttons());
+            sample({95,128,128,128,255,0,0,0,0,0}); assert(!ble::buttons());
+            sample({176,128,128,128,255,0,0,0,0,0}); assert(ble::buttons()==tgp::Right);
+            sample({165,128,128,128,255,0,0,0,0,0}); assert(ble::buttons()==tgp::Right);
+            sample({160,128,128,128,255,0,0,0,0,0}); assert(!ble::buttons());
+            sample({0,0,128,128,255,0,0,0,0,0}); assert(ble::buttons()==(tgp::Left|tgp::Up));
+            sample({0,0,128,128,4,0,0,0,0,0}); assert(ble::buttons()==tgp::Down); // D-pad wins.
+            sample({128,128,0,255,255,0,0,0,0,0}); assert(!ble::buttons()); // Right stick is unassigned.
+            sample({80,128,128,128,255,0,0,0,0,0}); assert(ble::buttons()==tgp::Left);
+            disconnected(); advance(1000); advertise(); linked(); ready();
+            sample({90,128,128,128,255,0,0,0,0,0}); assert(!ble::buttons()); // No stale hysteresis.
+            ble::shutdown(); return 0;
+        }
+        if(!std::strcmp(argv[1],"home_combo")) {
+            event({BTSTACK_EVENT_STATE,1,HCI_STATE_WORKING}); advertise(); linked(); ready();
+            report(255,0,0x60); advance(1499); assert(!ble::home() && !ble::buttons());
+            report(255,0,0x60); // Repeated reports must not restart the hold timer.
+            advance(1); assert(ble::home() && !ble::buttons());
+            unsigned fired_activity=activity; advance(10000); assert(activity==fired_activity);
+            report(255,1,0x20); assert(ble::home() && !ble::buttons()); // Release both to clear latch.
+            report(255); assert(!ble::home()); report(255,1); assert(ble::buttons()==tgp::A);
+            report(255,0,0x60); advance(1000); report(255); advance(1000); assert(!ble::home());
+            report(255,0,0x20); advance(2000); assert(!ble::home()); // One click is insufficient.
+            report(0,0,0x60); advance(2000); assert(!ble::home()); // D-pad pressed.
+            report(255,1,0x60); advance(2000); assert(!ble::home()); // Another button pressed.
+            sample({0,128,128,128,255,0,0x60,0,0,0}); advance(2000); assert(!ble::home());
+            sample({128,128,255,128,255,0,0x60,0,0,0}); advance(2000); assert(!ble::home());
+            sample({128,128,128,128,255,0,0x60,0,1,0}); advance(2000); assert(!ble::home());
+            report(255,0,0x60); advance(1000);
+            hid({HCI_EVENT_GATTSERVICE_META,5,GATTSERVICE_SUBEVENT_HID_REPORT,7,0,0,4});
+            advance(1000); assert(!ble::home()); // Malformed input cancels the gesture.
+            report(255,0,0x60); disconnected(); advance(2000); assert(!ble::home());
+            advertise(); linked(); ready();
+            clock_ms=0xffffff00u; report(255,0,0x60); advance(1500); assert(ble::home());
+            report(255); assert(!ble::home()); report(255,0,0x10); assert(ble::home()); // Android Home.
+            assert(!disconnects && !off); ble::shutdown(); return 0;
+        }
+        if(!std::strcmp(argv[1],"remote_close")) {
+            assert(hidpad::disconnect_report(hidpad::DisconnectReport,10));
+            assert(!hidpad::disconnect_report(hidpad::DisconnectReport,9));
+            uint8_t near[10]; std::memcpy(near,hidpad::DisconnectReport,10); near[9]=0;
+            assert(!hidpad::disconnect_report(near,10));
+            event({BTSTACK_EVENT_STATE,1,HCI_STATE_WORKING}); advertise(); linked(); ready();
+            report(2,1,0x10); assert(ble::buttons() && ble::home());
+            sample({0x54,0x47,0x50,0x01,0x42,0x59,0x45,0,0,0xa5});
+            assert(!ble::buttons() && !ble::home() && !disconnects); // Deferred outside callback.
+            report(0,1); assert(!ble::buttons()); // Drop already queued input after the close request.
+            ble::poll(); assert(disconnects==1 && !off && storage::config.ble_enabled && !usb::dirty);
+            disconnected(); advance(1000); assert(scans==2 && on==1);
+            advertise(); linked(); ready(); report(2,1); assert(ble::buttons()==(tgp::Right|tgp::A));
+            sample({0x54,0x47,0x50,0x01,0x42,0x59,0x45,0,0}); // Truncated control packet cannot close.
+            ble::poll(); assert(disconnects==1);
+            sync_disconnect=true;
+            sample({0x54,0x47,0x50,0x01,0x42,0x59,0x45,0,0,0xa5});
+            ble::poll(); assert(disconnects==2 && !ble::buttons());
+            advance(1000); assert(scans==3 && !off); // Synchronous link completion is safe too.
+            ble::shutdown(); return 0;
+        }
+        if(!std::strcmp(argv[1],"physical_layout")) {
+            assert(btstack_hid_get_report_size_for_id(4,HID_REPORT_TYPE_INPUT,map,sizeof(map))==10);
+            assert(btstack_hid_get_report_size_for_id(3,HID_REPORT_TYPE_INPUT,map,sizeof(map))==2);
+            event({BTSTACK_EVENT_STATE,1,HCI_STATE_WORKING}); advertise(0x1812,0); linked(); ready();
+            assert(reads==1 && last_read_id==4 && !disconnects);
+            report(0xa2,1,0x10); // High hat nibble is padding; low nibble means right.
+            assert(ble::buttons()==(tgp::Right|tgp::A) && ble::home());
+            // Consumer-control report 3 must neither become keys nor release them.
+            hid({HCI_EVENT_GATTSERVICE_META,10,GATTSERVICE_SUBEVENT_HID_REPORT,7,0,0,3,3,0,3,0,0});
+            assert(ble::buttons()==(tgp::Right|tgp::A) && ble::home());
+            // The old Android nine-byte report no longer matches this protocol.
+            hid({HCI_EVENT_GATTSERVICE_META,17,GATTSERVICE_SUBEVENT_HID_REPORT,7,0,0,4,10,0,
+                 4,128,128,128,128,2,1,0,0,0});
+            assert(!ble::buttons() && !ble::home());
+            for(unsigned null:{8,15,255}) {report(null); assert(!ble::buttons());}
+            report(0,2,0x0c); assert(ble::buttons()==(tgp::Up|tgp::B|tgp::Select|tgp::Start));
+            disconnected(); advance(1000);
+            // A descriptor with shifted buttons has the same rounded byte size
+            // and hat offset, but cannot safely use the fixed XTARK byte offsets.
+            descriptor_override.assign(std::begin(map),std::end(map));
+            const uint8_t padding[]={0x75,0x04,0x95,0x01,0x81,0x01};
+            auto pos=std::search(descriptor_override.begin(),descriptor_override.end(),std::begin(padding),std::end(padding));
+            assert(pos!=descriptor_override.end()); pos[1]=3;
+            advertise(); linked(); ready(); assert(disconnects==1 && reads==1);
+            ble::shutdown(); return 0;
+        }
+        if(!std::strcmp(argv[1],"pairing_failure")) {
+            event({BTSTACK_EVENT_STATE,1,HCI_STATE_WORKING}); advertise(0x1812,0); linked();
+            // GATT receives the ATT failure before the app's pairing callback.
+            ready(ERROR_CODE_UNSPECIFIED_ERROR); assert(disconnects==1);
+            pairing(ERROR_CODE_AUTHENTICATION_FAILURE,SM_REASON_PAIRING_NOT_SUPPORTED);
+            assert(disconnects==1); // Same failure must not reset the disconnect timeout.
+            disconnected(); advance(1000);
+            advertise(0x1812,0,0xab); linked();
+            // Reversing callback order must also terminate only once.
+            pairing(ERROR_CODE_AUTHENTICATION_FAILURE,SM_REASON_AUTHENTHICATION_REQUIREMENTS);
+            ready(ERROR_CODE_UNSPECIFIED_ERROR); assert(disconnects==2);
+            disconnected(); advance(1000);
+            advertise(0x1812,0,0xac); linked(); pairing(0,0); ready(); report(2,1);
+            assert(disconnects==2 && ble::buttons()==(tgp::Right|tgp::A));
+            ble::shutdown(); return 0;
+        }
         if(!std::strcmp(argv[1],"idle_link")) {
             event({BTSTACK_EVENT_STATE,1,HCI_STATE_WORKING}); advertise(); linked(); ready();
             assert(reads==1);
@@ -190,18 +304,18 @@ int main(int argc,char **argv) {
         if(!std::strcmp(argv[1],"home")) {
             event({BTSTACK_EVENT_STATE,1,HCI_STATE_WORKING});
             advertise(); linked(); ready();
-            // Fixed XTARK function bits work even if Home has no named usage.
+            // Home uses the fixed function bit (Button 13) in the XTARK report.
             report(255); assert(!ble::home() && !ble::buttons() && !activity);
             report(255,0,0x10); assert(ble::home() && !ble::buttons() && activity==1);
             disconnected(); advance(1000);
-            home_map(); advertise(); linked(); ready();
+            advertise(); linked(); ready();
             report(255,0,0x10); assert(ble::home() && !ble::buttons() && activity==2);
             advance(60000); assert(ble::home()); // No heartbeat required even for Home.
             report(1,3,0x1c); assert(ble::home() && ble::buttons()==(tgp::Up|tgp::Right|15));
             // An unrelated report must not release Home; malformed selected input must.
             hid({HCI_EVENT_GATTSERVICE_META,5,GATTSERVICE_SUBEVENT_HID_REPORT,7,0,0,2});
             assert(ble::home());
-            hid({HCI_EVENT_GATTSERVICE_META,5,GATTSERVICE_SUBEVENT_HID_REPORT,7,0,0,1});
+            hid({HCI_EVENT_GATTSERVICE_META,5,GATTSERVICE_SUBEVENT_HID_REPORT,7,0,0,4});
             assert(!ble::home() && !ble::buttons());
             report(255,0,0x10); report(255); assert(!ble::home());
             report(255,0,0x10);
@@ -209,11 +323,11 @@ int main(int argc,char **argv) {
             assert(!ble::home());
             report(255,0,0x10); disconnected(); assert(!ble::home()); advance(1000);
             // A controller that sends no Home bit remains a normal eight-key pad.
-            optional_home_map.clear(); advertise(); linked(); ready(); report(255,0,0x0c);
+            advertise(); linked(); ready(); report(255,0,0x0c);
             assert(!ble::home() && ble::buttons()==(tgp::Select|tgp::Start));
             // Other physical function bits (L2/R2/L3/R3) must not return to menu.
             report(255,0,0x63); assert(!ble::home() && !ble::buttons());
-            disconnected(); advance(1000); home_map(); advertise(); linked(); ready();
+            disconnected(); advance(1000); advertise(); linked(); ready();
             report(255,0,0x10); ble::command("ble off"); ble::poll(); assert(!ble::home());
             ble::shutdown(); return 0;
         }
@@ -282,18 +396,22 @@ int main(int argc,char **argv) {
     }
     // Exact protocol lengths, diagonal hats, eight buttons and reserved bits.
     hidpad::Receiver receiver;
-    uint8_t data[]={128,128,128,128,255,0,0,0,0};
-    assert(receiver.receive(data,9) && !receiver.buttons);
+    uint8_t data[]={128,128,128,128,15,0,0,0,0,0};
+    assert(receiver.receive(data,10) && !receiver.buttons);
     constexpr uint8_t hats[]={tgp::Up,tgp::Up|tgp::Right,tgp::Right,tgp::Down|tgp::Right,
         tgp::Down,tgp::Down|tgp::Left,tgp::Left,tgp::Up|tgp::Left};
     for(unsigned h=0;h<8;++h) {
         data[4]=h; data[5]=3; data[6]=12;
-        assert(receiver.receive(data,9) && receiver.buttons==(hats[h]|15));
+        assert(receiver.receive(data,10) && receiver.buttons==(hats[h]|15));
     }
     receiver.release(); assert(!receiver.buttons);
-    for(unsigned length=0;length<12;++length) if(length!=9) assert(!receiver.receive(data,length));
-    for(unsigned h=8;h<255;++h) {data[4]=h; assert(!receiver.receive(data,9) && !receiver.buttons);}
-    assert(!receiver.receive(nullptr,9));
+    for(unsigned length=0;length<13;++length) if(length!=10) assert(!receiver.receive(data,length));
+    data[5]=data[6]=0;
+    for(unsigned h=0;h<256;++h) {
+        data[4]=h; data[9]=0xa5; // Padding does not affect keys or direction.
+        assert(receiver.receive(data,10) && receiver.buttons==((h&15)<8?hats[h&15]:0));
+    }
+    assert(!receiver.receive(nullptr,10));
     uint8_t address[6];
     assert(hidpad::address("Aa:BB:cc:DD:ee:FF",address) && address[0]==0xaa && address[5]==0xff);
     for(const char *s:{"","AA:BB:CC:DD:EE:FG","AA:BB:CC:DD:EE:FFx","AA-BB:CC:DD:EE:FF"})
@@ -317,7 +435,7 @@ int main(int argc,char **argv) {
     report(255); assert(!ble::buttons() && activity==1); // Neutral heartbeat is not activity.
     report(2,1); assert(ble::buttons()==(tgp::Right|tgp::A));
     // Truncated selected report releases keys, unrelated report IDs do not.
-    hid({HCI_EVENT_GATTSERVICE_META,5,GATTSERVICE_SUBEVENT_HID_REPORT,7,0,0,1}); assert(!ble::buttons());
+    hid({HCI_EVENT_GATTSERVICE_META,5,GATTSERVICE_SUBEVENT_HID_REPORT,7,0,0,4}); assert(!ble::buttons());
     report(2,1);
     hid({HCI_EVENT_GATTSERVICE_META,5,GATTSERVICE_SUBEVENT_HID_REPORT,7,0,0,2}); assert(ble::buttons());
     disconnected(); assert(!ble::buttons()); advance(1000); assert(scans==2);

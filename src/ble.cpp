@@ -16,6 +16,7 @@ enum class State {Off,Starting,Scanning,Connecting,Discovering,Ready,Disconnecti
 State state=State::Off;
 bool initialized=false,working=false,reconfigure=false;
 bool tracing=false;
+bool remote_close=false;
 uint32_t state_at=0,max_poll_gap=0,last_poll=0,max_poll_work=0,restarts=0;
 uint32_t scan_reports=0,scan_candidates=0;
 const char *restart_reason=nullptr;
@@ -42,6 +43,7 @@ const char *name() {
 }
 void phase(State value) {
     state=value; state_at=now();
+    if(value!=State::Ready) remote_close=false;
 }
 void trace_bytes(const uint8_t *data,size_t bytes) {
     for(size_t i=0;i<bytes;++i) std::printf("%s%02X",i?" ":"",data[i]);
@@ -76,6 +78,9 @@ void disconnect() {
     else gap_connect_cancel();
 }
 void reject(uint8_t reason) {
+    // A failed pairing also fails the pending HIDS query. Both callbacks may
+    // arrive for one failure; do not restart an in-progress disconnect/retry.
+    if(state!=State::Discovering && state!=State::Ready) return;
     receiver.release();
     std::memcpy(skipped_peer,peer,sizeof(peer)); skipped_type=peer_type; skipped_at=now();
     std::printf("BLE: HID FAILED status=0x%02x\n",reason);
@@ -83,7 +88,23 @@ void reject(uint8_t reason) {
     else retry();
 }
 // Check the Report Map before interpreting XTARK byte offsets. In particular,
-// do not reinterpret a keyboard/mouse/battery report as a nine-byte gamepad.
+// do not reinterpret a keyboard/mouse/consumer report as the XTARK gamepad.
+bool button_layout(const uint8_t *map,uint16_t bytes,uint16_t id) {
+    uint16_t fields=0;
+    btstack_hid_usage_iterator_t iterator;
+    btstack_hid_usage_iterator_init(&iterator,map,bytes,HID_REPORT_TYPE_INPUT);
+    while(btstack_hid_usage_iterator_has_more(&iterator)) {
+        btstack_hid_usage_item_t item;
+        btstack_hid_usage_iterator_get_item(&iterator,&item);
+        if(item.report_id!=id) continue;
+        // The tenth byte is constant padding in the physical XTARK descriptor.
+        if(item.bit_pos+item.size>72) return false;
+        if(item.usage_page!=9 || item.size!=1 || (item.descriptor_item.item_value&7)!=2) continue;
+        if(item.usage>=1 && item.usage<=16 && item.bit_pos==39+item.usage)
+            fields|=uint16_t(1u<<(item.usage-1));
+    }
+    return fields==0xffff;
+}
 bool select_layout(uint8_t instances) {
     for(uint8_t index=0;index<instances;++index) {
         const uint8_t *map=hids_host_descriptor_storage_get_descriptor_data(cid,index);
@@ -98,8 +119,11 @@ bool select_layout(uint8_t instances) {
         while(btstack_hid_usage_iterator_has_more(&iterator)) {
             btstack_hid_usage_item_t item;
             btstack_hid_usage_iterator_get_item(&iterator,&item);
-            if(item.usage_page!=1 || item.usage!=0x39 || item.bit_pos!=32 || item.size!=8) continue;
-            if(btstack_hid_get_report_size_for_id(item.report_id,HID_REPORT_TYPE_INPUT,map,bytes)!=9) continue;
+            if(item.usage_page!=1 || item.usage!=0x39 || item.bit_pos!=32 ||
+               item.size!=4 || item.global_logical_minimum!=0 ||
+               iterator.global_logical_maximum!=7 || (item.descriptor_item.item_value&0x47)!=0x42) continue;
+            if(btstack_hid_get_report_size_for_id(item.report_id,HID_REPORT_TYPE_INPUT,map,bytes)!=hidpad::ReportBytes ||
+               !button_layout(map,bytes,item.report_id)) continue;
             service_index=index;
             report_id=item.report_id==HID_REPORT_ID_UNDEFINED?0:uint8_t(item.report_id);
             return true;
@@ -125,20 +149,21 @@ void hid_event(uint8_t packet_type,uint16_t,uint8_t *packet,uint16_t size) {
             break;
         }
         case GATTSERVICE_SUBEVENT_HID_REPORT: {
-            if(tracing && size>=9) {
-                uint16_t bytes=gattservice_subevent_hid_report_get_report_len(packet);
-                std::printf("BLE: REPORT service=%u id=%u len=%u data=",packet[5],packet[6],bytes);
-                trace_bytes(packet+9,std::min<unsigned>(32,std::min<unsigned>(bytes,size-9)));
-            }
             if(state!=State::Ready || size<7 || packet[5]!=service_index || packet[6]!=report_id) return;
             if(size<9) {receiver.receive(nullptr,0); return;}
             uint16_t bytes=gattservice_subevent_hid_report_get_report_len(packet);
             const uint8_t *report=gattservice_subevent_hid_report_get_report(packet);
             // BTstack prepends the Report ID, although GATT notifications do not.
-            if(bytes!=10 || size<9+bytes || report[0]!=report_id) {
+            if(bytes!=hidpad::ReportBytes+1 || size<9+bytes || report[0]!=report_id) {
                 receiver.receive(nullptr,0); return;
             }
-            if(receiver.receive(report+1,bytes-1)) {
+            if(remote_close) return;
+            if(hidpad::disconnect_report(report+1,bytes-1)) {
+                receiver.release(); remote_close=true;
+                std::printf("BLE: REMOTE CLOSE; disconnecting gamepad\n");
+                return;
+            }
+            if(receiver.receive(report+1,bytes-1,now())) {
                 if(receiver.buttons || receiver.home) power::activity();
             }
             break;
@@ -221,10 +246,15 @@ void event(uint8_t packet_type,uint16_t,uint8_t *packet,uint16_t size) {
             if(size>=4 && sm_event_just_works_request_get_handle(packet)==handle)
                 sm_just_works_confirm(handle);
             break;
-        case SM_EVENT_PAIRING_COMPLETE:
-            if(size>=13 && sm_event_pairing_complete_get_handle(packet)==handle && sm_event_pairing_complete_get_status(packet))
-                reject(sm_event_pairing_complete_get_status(packet));
+        case SM_EVENT_PAIRING_COMPLETE: {
+            if(size<13 || sm_event_pairing_complete_get_handle(packet)!=handle) return;
+            uint8_t status=sm_event_pairing_complete_get_status(packet);
+            uint8_t reason=sm_event_pairing_complete_get_reason(packet);
+            if(status || tracing)
+                std::printf("BLE: PAIRING %s status=0x%02x reason=0x%02x\n",status?"FAILED":"OK",status,reason);
+            if(status) reject(status);
             break;
+        }
         default:break;
     }
 }
@@ -252,6 +282,10 @@ void init() {
     initialized=true;
     l2cap_init(); sm_init(); gatt_client_init();
     sm_set_io_capabilities(IO_CAPABILITY_NO_INPUT_NO_OUTPUT);
+    // BTstack defaults to SC-only when ENABLE_LE_SECURE_CONNECTIONS is built.
+    // Setting AuthReq=0 alone does not disable that policy. Match the XTARK
+    // receiver's legacy Just Works pairing, without requiring bonding or MITM.
+    sm_set_secure_connections_only_mode(false);
     sm_set_authentication_requirements(0); // Temporary pairing, without bonding.
     hids_host_init(descriptor_storage,sizeof(descriptor_storage));
     hci_registration.callback=event; hci_add_event_handler(&hci_registration);
@@ -278,6 +312,12 @@ void poll() {
     if(at-last_poll>max_poll_gap) max_poll_gap=at-last_poll;
     last_poll=at;
     cyw43_arch_poll();
+    // Finish HIDS callbacks before terminating the link, and never persistently
+    // disable the radio for an Android app-close message.
+    if(remote_close && state==State::Ready) disconnect();
+    if(state==State::Ready && receiver.poll(now())) {
+        power::activity();
+    }
     uint32_t work=now()-at;
     if(work>max_poll_work) max_poll_work=work;
     if(work>=1000) std::printf("BLE: SLOW POLL work_ms=%lu\n",static_cast<unsigned long>(work));
