@@ -3,12 +3,6 @@
 
 namespace gamepad {
 namespace {
-int hex(char c) {
-    if(c>='0' && c<='9') return c-'0';
-    if(c>='A' && c<='F') return c-'A'+10;
-    if(c>='a' && c<='f') return c-'a'+10;
-    return -1;
-}
 int8_t axis(uint8_t value,int8_t previous) {
     // Engage 48 counts from center; release 32 counts from center. Hysteresis
     // prevents slight movement at the threshold from repeatedly toggling keys.
@@ -23,63 +17,72 @@ bool centered(uint8_t value) {return value>=96 && value<=160;}
 bool disconnect_report(const uint8_t *data,size_t bytes) {
     return data && bytes==ReportBytes && !std::memcmp(data,DisconnectReport,ReportBytes);
 }
-bool decode(const uint8_t *data,size_t bytes,uint8_t &buttons) {
+bool ControllerState::neutral() const {
+    return !keys && !dpad && !lt && !rt && centered(left_x) && centered(left_y) &&
+        centered(right_x) && centered(right_y);
+}
+bool decode(const uint8_t *data,size_t bytes,ControllerState &state) {
     if(!data || bytes!=ReportBytes || disconnect_report(data,bytes)) return false;
     // Hat is a four-bit absolute field with Null State; upper bits are padding.
     // Values outside its logical range 0..7 indicate no direction.
     uint8_t hat=data[4]&0x0f;
-    constexpr uint8_t hats[]={gamepad::Up,gamepad::Up|gamepad::Right,gamepad::Right,gamepad::Right|gamepad::Down,
-        gamepad::Down,gamepad::Down|gamepad::Left,gamepad::Left,gamepad::Left|gamepad::Up};
-    buttons=(data[5]&3)|(data[6]&12)|(hat<8?hats[hat]:0);
+    constexpr uint8_t hats[]={North,North|East,East,East|South,South,South|West,West,West|North};
+    state={};
+    state.left_x=data[0]; state.left_y=data[1]; state.right_x=data[2]; state.right_y=data[3];
+    state.dpad=hat<8?hats[hat]:0; state.rt=data[7]; state.lt=data[8];
+    constexpr uint16_t byte5[]={KeyA,KeyB,0,KeyX,KeyY,0,KeyLB,KeyRB};
+    constexpr uint16_t byte6[]={KeyLT,KeyRT,KeySelect,KeyStart,KeyHome,KeyL3,KeyR3,0};
+    for(unsigned bit=0;bit<8;++bit) {
+        if(data[5]&(1u<<bit)) state.keys|=byte5[bit];
+        if(data[6]&(1u<<bit)) state.keys|=byte6[bit];
+    }
     return true;
 }
 bool Receiver::receive(const uint8_t *data,size_t bytes,uint32_t now) {
-    if(!decode(data,bytes,buttons)) {release(); ++rejected; return false;}
-    stick_x=axis(data[0],stick_x); stick_y=axis(data[1],stick_y);
-    if((data[4]&15)>=8) { // A pressed D-pad overrides the whole stick direction.
-        if(stick_x<0) buttons|=gamepad::Left;
-        if(stick_x>0) buttons|=gamepad::Right;
-        if(stick_y<0) buttons|=gamepad::Up;
-        if(stick_y>0) buttons|=gamepad::Down;
+    ControllerState decoded;
+    if(!decode(data,bytes,decoded)) {release(); ++rejected; return false;}
+    update(decoded,now); return true;
+}
+void Receiver::update(const ControllerState &value,uint32_t now) {
+    state=value;
+    valid=true; at=now;
+    stick_x=axis(state.left_x,stick_x); stick_y=axis(state.left_y,stick_y);
+    directions=state.dpad;
+    if(!state.dpad) { // A pressed D-pad overrides the whole stick direction.
+        if(stick_x<0) directions|=West;
+        if(stick_x>0) directions|=East;
+        if(stick_y<0) directions|=North;
+        if(stick_y>0) directions|=South;
     }
-    if(!(data[6]&0x60)) combo_latched=false; // Release both clicks to re-arm.
-    bool candidate=data[5]==0 && data[6]==0x60 && (data[4]&15)>=8 &&
-        centered(data[0]) && centered(data[1]) && centered(data[2]) && centered(data[3]) &&
-        data[7]==0 && data[8]==0;
+    if(!(state.keys&(KeyL3|KeyR3))) combo_latched=false; // Release both clicks to re-arm.
+    bool candidate=selected && state.keys==(KeyL3|KeyR3) && !state.dpad &&
+        centered(state.left_x) && centered(state.left_y) && centered(state.right_x) && centered(state.right_y) &&
+        !state.lt && !state.rt;
     if(candidate && !combo_holding) combo_at=now;
     combo_holding=candidate;
-    home=(data[6]&0x10)!=0 || combo_latched;
-    if(combo_latched) buttons=0;
-    ++received; return true;
+    home=(state.keys&KeyHome)!=0 || combo_latched;
+    ++received; notify();
 }
 bool Receiver::poll(uint32_t now) {
     if(!combo_holding || combo_latched || uint32_t(now-combo_at)<1500) return false;
-    combo_latched=true; home=true; buttons=0;
+    combo_latched=true; home=true; notify();
     return true;
 }
 void Receiver::release() {
-    buttons=0; home=false;
+    state={}; directions=0; home=false; valid=false;
     stick_x=stick_y=0;
     combo_holding=combo_latched=false; combo_at=0;
+    notify();
 }
-bool address(const char *text,uint8_t out[6]) {
-    if(!text || std::strlen(text)!=17) return false;
-    for(unsigned i=0;i<6;++i) {
-        int a=hex(text[i*3]),b=hex(text[i*3+1]);
-        if(a<0 || b<0 || (i<5 && text[i*3+2]!=':')) return false;
-        out[i]=uint8_t(a*16+b);
-    }
-    return true;
+void Receiver::select(bool enabled) {
+    selected=enabled; combo_holding=combo_latched=false; combo_at=0;
+    home=(state.keys&KeyHome)!=0;
 }
-bool uuid16(const char *text,uint16_t &out) {
-    if(!text || std::strlen(text)!=6 || text[0]!='0' || (text[1]!='x' && text[1]!='X')) return false;
-    unsigned value=0;
-    for(unsigned i=2;i<6;++i) {
-        int n=hex(text[i]);
-        if(n<0) return false;
-        value=(value<<4)|unsigned(n);
-    }
-    if(!value) return false;
-    out=uint16_t(value); return true;
+uint8_t Receiver::nes() const {
+    if(!valid || combo_latched) return 0;
+    return ((state.keys&KeyA)?A:0)|((state.keys&KeyB)?B:0)|
+        ((state.keys&KeySelect)?Select:0)|((state.keys&KeyStart)?Start:0)|
+        ((directions&North)?Up:0)|((directions&South)?Down:0)|
+        ((directions&West)?Left:0)|((directions&East)?Right:0);
 }
 }

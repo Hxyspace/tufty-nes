@@ -18,10 +18,6 @@ with tempfile.TemporaryDirectory(prefix='tufty-nes-test-') as d:
     scenario=sys.argv[3] if len(sys.argv)>3 else ''
     gamepads={
         'gamepad_override':'{"controller_id":456,"ble_enabled":true,"ble_peer":"03:25:20:32:28:98","ble_random":false,"ble_scan_uuid":"0x180f"}',
-        'gamepad_invalid':'{"controller_id":456,"ble_peer":"not-a-mac"}',
-        'gamepad_bad_uuid':'{"controller_id":456,"ble_scan_uuid":"0x1812oops"}',
-        'gamepad_missing_fields':'{"ble_peer":"03:25:20:32:28:98"}',
-        'gamepad_large':' '*1024,
         'gamepad_no_state':'{"ble_peer":"03:25:20:32:28:98","ble_random":false}'
     }
     if scenario in gamepads:

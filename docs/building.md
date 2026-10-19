@@ -67,7 +67,22 @@ python3 tools/deps.py --profile host --radio # 准备含真实 HID 解析器的�
 
 Core 0 运行模拟器、菜单、TinyUSB 和 BLE；Core 1 负责屏幕转换及 PIO/DMA 输出。串口输入量较小，BLE 使用 CYW43 polling 架构，在模拟器周期钩子及菜单/帧等待中服务，不占用显示核。服务间隔目标为 1 ms，无线 HCI 每次最多处理 4 轮。`ble status` 的 `poll_gap_ms` 记录最大实际轮询间隔，`poll_work_ms` 记录 CYW43 单次轮询最大耗时，`restarts` 记录超时恢复次数；前者还包含两次轮询间其他工作耗时及首次控制器初始化。
 
-`src/protocol.*` 处理 CDC1 的 TGP v3 分帧、握手和超时，`src/ble.cpp` 处理 BLE 连接与报告筛选。两者使用 `src/gamepad.*` 的同一套十字节 Report 解析，各自保留独立的摇杆、Home 和组合键状态。本机 GPIO 直接映射为 NES 按键和 Home，再与远程输入合并，无需包装成 Report。
+输入与设备管理按以下职责分层：
+
+| 模块 | 职责 |
+|---|---|
+| `storage.*` | 加载、校验和保存 `/state/nes.json` |
+| `controllers.*` | Console 与后续设置菜单共用的来源开关、白名单编辑接口；将配置快照传入运行层 |
+| `bluetooth_manager.*` | 设备候选缓存、限时发现、临时选择、白名单筛选与首选设备策略，不依赖 HID、BTstack 或文件系统 |
+| `ble.*` | CYW43/BTstack 驱动、广播解析、物理扫描/连接/配对、断开和故障恢复 |
+| `ble_gamepad.*` | HID 服务与 Report Map 检查、报告选择和接收，不管理扫描列表、白名单或配置文件 |
+| `usb.*` / `protocol.*` | CDC1 接收及 TGP v3 分帧、握手、序列检查与超时 |
+| `gamepad.*` | 共用 Report 解码、完整 `ControllerState`、每来源摇杆滞回和 Home 手势、NES 按键派生 |
+| `input.*` | 单一活跃远程来源仲裁、本机合并、NES 输出及菜单 `held/pressed/released` 事件 |
+
+串口和 BLE 均通过共用解码器生成完整控制器状态，保留双摇杆、压力和全部按键；其他布局的适配器也可直接提交 `ControllerState`。菜单边沿按到达累计，读取时消费；GPIO 直接提交本机状态，无需包装成 Report。应用从统一输入层读取，不单独合并各传输层的接收器。
+
+BLE 发现和连接请求由服务循环执行，扫描列表使用固定容量快照。存储层只在加载和保存时读写配置，运行中的连接层使用设置服务传入的配置快照，HID 适配层无需读取配置。白名单使用 MAC 与地址类型，不能将安卓轮换的随机地址当成永久身份。
 
 连接超时先取消连接，再关闭 HCI 控制器；连接失败、启动或取消/断开无响应时也会关闭控制器，等待 OFF 后自动重新启动。正常空闲扫描及已就绪连接不会因输入静默触发此恢复；就绪后不发起周期性 GATT 检查。运行时恢复保留栈及事件注册，不重复初始化 GATT，也不写入 Flash 配对库。调用可能同步回调的 BTstack API 前先设置等待状态，避免回调的完成状态被覆盖。
 

@@ -1,6 +1,0 @@
-{
-  "ble_enabled": true,
-  "ble_peer": "",
-  "ble_random": false,
-  "ble_scan_uuid": "0x1812"
-}

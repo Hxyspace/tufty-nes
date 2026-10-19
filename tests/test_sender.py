@@ -30,14 +30,14 @@ class Tests(unittest.TestCase):
                 w=Wire(); sender=Sender(w)
                 w.rx=b'#TGP:READY:'+sender.nonce+b':3\n'; sender.poll()
                 sender.send(capture.read())
-                self.assertEqual(w.tx[-1],packet(1,0,make_report(A,home=True)))
+                self.assertEqual(w.tx[-1],packet(1,1,make_report(A,home=True)))
                 # Losing focus releases buttons and Home, without ending the session.
                 api.user32.GetForegroundWindow.return_value=99
                 api.user32.GetAsyncKeyState.reset_mock()
                 self.assertEqual(capture.read(),NEUTRAL_REPORT)
                 api.user32.GetAsyncKeyState.assert_not_called()
                 sender.send(capture.read())
-                self.assertEqual(w.tx[-1],packet(1,1,NEUTRAL_REPORT))
+                self.assertEqual(w.tx[-1],packet(1,2,NEUTRAL_REPORT))
                 self.assertTrue(sender.ready)
                 api.user32.GetForegroundWindow.return_value=window
                 pressed={0x0d,0xa1,ord('X')}
@@ -64,12 +64,16 @@ class Tests(unittest.TestCase):
         sender.send(report); self.assertEqual(len(w.tx),1)
         w.rx=b'#TGP:READY:0000000000000000:3\n'; sender.poll(); self.assertFalse(sender.ready)
         w.rx=b'#TGP:READY:'+sender.nonce+b':3\r\n'; sender.poll(); self.assertTrue(sender.ready)
-        sender.send(report); self.assertEqual(w.tx[-1],packet(1,0,report))
-        sender.send(report); self.assertEqual(len(w.tx),2)
-        now[0]=0.12; sender.send(report); self.assertEqual(w.tx[-1],packet(1,1,report))
+        self.assertEqual(w.tx[-1],packet(1,0,NEUTRAL_REPORT))
+        sender.send(report); self.assertEqual(w.tx[-1],packet(1,1,report))
+        sender.send(report); self.assertEqual(len(w.tx),3)
+        # A duplicate READY cannot inject a neutral frame during gameplay.
+        w.rx=b'#TGP:READY:'+sender.nonce+b':3\n'; sender.poll()
+        self.assertEqual(len(w.tx),3)
+        now[0]=0.12; sender.send(report); self.assertEqual(w.tx[-1],packet(1,2,report))
         # Home is a normal held report, including its release edge.
-        sender.send(make_report(home=True)); self.assertEqual(w.tx[-1],packet(1,2,make_report(home=True)))
-        sender.send(NEUTRAL_REPORT); self.assertEqual(w.tx[-1],packet(1,3,NEUTRAL_REPORT))
+        sender.send(make_report(home=True)); self.assertEqual(w.tx[-1],packet(1,3,make_report(home=True)))
+        sender.send(NEUTRAL_REPORT); self.assertEqual(w.tx[-1],packet(1,4,NEUTRAL_REPORT))
         now[0]=1.0; w.rx=b'#TGP:ALIVE:'+sender.nonce+b'\n'; sender.poll()
         now[0]=1.3; sender.poll(); self.assertTrue(sender.ready)
         old=sender.nonce; now[0]=2.21; sender.poll()
@@ -88,7 +92,7 @@ class Tests(unittest.TestCase):
                 sender.send(make_report(A))
                 if acknowledge: w.rx=b'#TGP:BYE:'+sender.nonce+b'\n'
                 sender.close(timeout=0.001)
-                self.assertEqual(w.tx[-2:], [packet(1,1,NEUTRAL_REPORT),packet(1,2,DISCONNECT_REPORT)])
+                self.assertEqual(w.tx[-2:], [packet(1,2,NEUTRAL_REPORT),packet(1,3,DISCONNECT_REPORT)])
                 self.assertFalse(sender.ready)
                 count=len(w.tx)
                 w.rx=b'#TGP:APP\n#TGP:BYE:'+sender.nonce+b'\n'

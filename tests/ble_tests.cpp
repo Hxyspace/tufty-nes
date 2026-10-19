@@ -2,6 +2,8 @@
 // mocked at their public APIs. No controller or hardware is needed.
 #include "ble.hpp"
 #include "gamepad.hpp"
+#include "controllers.hpp"
+#include "protocol.hpp"
 #include "storage.hpp"
 #include "btstack.h"
 #include "pico/stdlib.h"
@@ -95,7 +97,7 @@ int cyw43_arch_init() {++inits; return 0;}
 void cyw43_arch_poll() {++polls; clock_ms+=poll_delay; poll_delay=0;}
 void cyw43_arch_deinit() {++deinits;}
 namespace storage {Config config; bool state_ready() {return true;}}
-namespace usb {bool dirty=false; bool disk_mode() {return disk;}}
+namespace usb {tgp::Receiver pad; bool dirty=false; bool disk_mode() {return disk;}}
 namespace power {void activity() {++::activity;}}
 extern "C" {
 void btstack_assert_failed(const char *,uint16_t) {assert(false);}
@@ -147,6 +149,75 @@ uint16_t hids_host_descriptor_storage_get_descriptor_len(uint16_t,uint8_t) {
 int main(int argc,char **argv) {
     if(argc==2) {
         ble::init(); assert(inits==1 && on==1);
+        if(!std::strcmp(argv[1],"discovery")) {
+            event({BTSTACK_EVENT_STATE,1,HCI_STATE_WORKING});
+            assert(ble::discover(1000)); ble::poll();
+            advertise(); advertise(); advertise(0x180f,0,0xbb);
+            assert(!connects);
+            ble::Candidate list[16]; assert(ble::candidates(list,16)==2);
+            assert(list[0].hid && !list[1].hid && list[0].peer.random && list[0].rssi==-80);
+            advance(1000); assert(ble::status().state==ble::State::Waiting);
+            advertise(); assert(!connects); // Discovery completion never auto-selects a device.
+            assert(ble::connect(list[1].peer)); ble::poll();
+            advertise(); assert(!connects); advertise(0x180f,0,0xbb); assert(connects==1);
+            linked(); ready();
+            report(255); assert(ble::status().state==ble::State::Ready);
+            // A new selection survives the old link's asynchronous disconnection.
+            assert(ble::connect(list[0].peer)); ble::poll(); assert(disconnects==1);
+            disconnected(); advance(1000); advertise(0x180f,0,0xbb); assert(connects==1);
+            advertise(); assert(connects==2); linked(); ready();
+            assert(ble::discover(1000)); ble::poll(); assert(disconnects==2);
+            disconnected(); advance(1000); advertise(); assert(connects==2);
+            advance(1000); assert(ble::status().state==ble::State::Waiting);
+            ble::stop_discovery(); ble::poll(); advertise(); assert(connects==3);
+            ble::shutdown(); return 0;
+        }
+        if(!std::strcmp(argv[1],"selection")) {
+            bluetooth::Peer a,b;
+            assert(bluetooth::address("AA:BB:CC:DD:EE:FF",a.address)); a.random=true;
+            b=a; b.address[0]=0xbb;
+            controllers::whitelist_add(a,true); controllers::whitelist_add(b);
+            controllers::set_mode(bluetooth::Mode::WhitelistOnly);
+            event({BTSTACK_EVENT_STATE,1,HCI_STATE_WORKING}); ble::poll();
+            advertise(0x180f,1,0xbb); assert(!connects); // Preferred peer has a scan window.
+            advertise(0x180f,1,0xcc); assert(!connects); // Unknown device cannot connect.
+            advertise(0x180f); assert(connects==1); // Known address bypasses UUID filter.
+            linked(); ready(); disconnected(); advance(1000);
+            advertise(0x180f,1,0xbb); assert(connects==1);
+            advance(2000); advertise(0x180f,1,0xbb); assert(connects==2); linked(); ready();
+            assert(controllers::whitelist_remove(b)); ble::poll(); disconnected(); advance(1000);
+            advertise(0x1812,1,0xbb); assert(connects==2);
+            controllers::whitelist_clear(); ble::poll(); advertise(); assert(connects==2);
+            assert(storage::config.ble.mode==bluetooth::Mode::WhitelistOnly);
+            ble::shutdown(); return 0;
+        }
+        if(!std::strcmp(argv[1],"controls")) {
+            controllers::init();
+            event({BTSTACK_EVENT_STATE,1,HCI_STATE_WORKING}); advertise(); linked(); ready();
+            report(255); report(2,1); assert(input::hub.nes()==(gamepad::Right|gamepad::A));
+            uint8_t neutral[]={128,128,128,128,255,0,0,0,0,0};
+            usb::pad.input.receive(neutral,10); assert(input::hub.active_remote()==input::Source::Ble);
+            controllers::set_enabled(input::Source::Ble,false); ble::poll();
+            assert(!input::hub.nes() && input::hub.active_remote()==input::Source::Serial);
+            disconnected(); ble::poll();
+            assert(controllers::command("serial off") && !storage::config.serial_enabled);
+            assert(input::hub.active_remote()==input::Source::None);
+            controllers::command("serial on"); assert(storage::config.serial_enabled && !usb::pad.active);
+            assert(controllers::command("ble allow AA:BB:CC:DD:EE:FF public"));
+            controllers::command("ble prefer AA:BB:CC:DD:EE:FF random");
+            assert(storage::config.ble.count==2 && storage::config.ble.preferred==1);
+            controllers::command("ble forget AA:BB:CC:DD:EE:FF public");
+            assert(storage::config.ble.count==1 && storage::config.ble.preferred==0);
+            controllers::command("ble mode whitelist");
+            assert(storage::config.ble.mode==bluetooth::Mode::WhitelistOnly);
+            controllers::command("ble whitelist"); controllers::command("pad status");
+            assert(!ble::discover() && !ble::connect(storage::config.ble.peers[0]));
+            controllers::command("ble scan"); assert(storage::config.ble_enabled);
+            assert(input::hub.status(input::Source::Ble).enabled);
+            controllers::command("ble whitelist clear"); assert(!storage::config.ble.count);
+            assert(usb::dirty && !controllers::command("help"));
+            ble::shutdown(); return 0;
+        }
         if(!std::strcmp(argv[1],"left_stick")) {
             event({BTSTACK_EVENT_STATE,1,HCI_STATE_WORKING}); advertise(); linked(); ready();
             sample({80,128,128,128,255,1,0,0,0,0}); assert(ble::buttons()==(gamepad::Left|gamepad::A));
@@ -233,6 +304,13 @@ int main(int argc,char **argv) {
             auto pos=std::search(descriptor_override.begin(),descriptor_override.end(),std::begin(padding),std::end(padding));
             assert(pos!=descriptor_override.end()); pos[1]=3;
             advertise(); linked(); ready(); assert(disconnects==1 && reads==1);
+            disconnected(); advance(30000);
+            // Axes must also match before exposing the complete normalized state.
+            descriptor_override.assign(std::begin(map),std::end(map));
+            const uint8_t axis[]={0x09,0x30,0x09,0x31};
+            pos=std::search(descriptor_override.begin(),descriptor_override.end(),std::begin(axis),std::end(axis));
+            assert(pos!=descriptor_override.end()); pos[1]=0x31; pos[3]=0x30;
+            advertise(); linked(); ready(); assert(disconnects==2 && reads==1);
             ble::shutdown(); return 0;
         }
         if(!std::strcmp(argv[1],"pairing_failure")) {
@@ -278,7 +356,7 @@ int main(int argc,char **argv) {
         if(!std::strcmp(argv[1],"disconnect_timeout")) {
             event({BTSTACK_EVENT_STATE,1,HCI_STATE_WORKING}); advertise(); linked(); ready();
             report(2,1,0x10);
-            ble::command("ble scan"); ble::poll();
+            controllers::command("ble scan"); ble::poll();
             assert(disconnects==1 && !ble::buttons() && !ble::home());
             advance(10000); assert(off==1);
             finish_restart();
@@ -288,13 +366,14 @@ int main(int argc,char **argv) {
         }
         if(!std::strcmp(argv[1],"scan_uuid")) {
             storage::config.ble_scan_uuid=0x180f;
+            ble::configure({true,0x180f,{}},false);
             event({BTSTACK_EVENT_STATE,1,HCI_STATE_WORKING});
             advertise(); assert(!connects);
             advertise(0x180f); assert(connects==1);
             ble::command("ble trace on"); linked(); ready(); report(2,1);
             assert(ble::buttons()==(gamepad::Right|gamepad::A));
             disconnected(); advance(1000);
-            ble::command("ble target AA:BB:CC:DD:EE:FF public"); ble::poll();
+            controllers::command("ble target AA:BB:CC:DD:EE:FF public"); ble::poll();
             advertise(0x1812,1); assert(connects==1); // Wrong address type.
             advertise(0x1812,0,0xab); assert(connects==1); // Wrong address.
             advertise(0x1812,0); assert(connects==2); // MAC bypasses scan UUID.
@@ -328,7 +407,7 @@ int main(int argc,char **argv) {
             // Other physical function bits (L2/R2/L3/R3) must not return to menu.
             report(255,0,0x63); assert(!ble::home() && !ble::buttons());
             disconnected(); advance(1000); advertise(); linked(); ready();
-            report(255,0,0x10); ble::command("ble off"); ble::poll(); assert(!ble::home());
+            report(255,0,0x10); controllers::command("ble off"); ble::poll(); assert(!ble::home());
             ble::shutdown(); return 0;
         }
         if(!std::strcmp(argv[1],"startup_timeout")) {
@@ -355,7 +434,7 @@ int main(int argc,char **argv) {
                 advance(10000); assert(cancels==1 && scan_blocked);
                 linked(ERROR_CODE_UNKNOWN_CONNECTION_IDENTIFIER);
                 // A command during pending recovery must not resume scanning early.
-                ble::command("ble on"); ble::poll(); assert(off==1 && scans==1);
+                controllers::command("ble on"); ble::poll(); assert(off==1 && scans==1);
                 unsigned previous_connects=connects; advertise(0x1812,1,0xbb);
                 assert(connects==previous_connects);
                 finish_restart(); assert(!scan_blocked);
@@ -371,15 +450,15 @@ int main(int argc,char **argv) {
                 finish_restart(); connect_result=0;
             } else if(!std::strcmp(argv[1],"sync_disconnect")) {
                 linked(); ready(); report(2,1); sync_disconnect=true;
-                ble::command("ble scan"); ble::poll(); assert(!ble::buttons());
+                controllers::command("ble scan"); ble::poll(); assert(!ble::buttons());
                 advance(1000); assert(scans==2 && !off);
             } else if(!std::strcmp(argv[1],"recovery_off")) {
                 advance(10000); assert(cancels==1);
                 advance(10000); assert(off==1 && radio_state==HCI_STATE_HALTING);
-                ble::command("ble off"); ble::poll();
+                controllers::command("ble off"); ble::poll();
                 event({BTSTACK_EVENT_STATE,1,HCI_STATE_OFF}); ble::poll();
                 advance(1000); assert(on==1); // Disabling cancels automatic restart.
-                ble::command("ble on"); ble::poll(); assert(on==2 && inits==1);
+                controllers::command("ble on"); ble::poll(); assert(on==2 && inits==1);
                 event({BTSTACK_EVENT_STATE,1,HCI_STATE_WORKING}); assert(scans==2);
             } else {
                 assert(!std::strcmp(argv[1],"lost_cancel"));
@@ -397,34 +476,35 @@ int main(int argc,char **argv) {
     // Exact protocol lengths, diagonal hats, eight buttons and reserved bits.
     gamepad::Receiver receiver;
     uint8_t data[]={128,128,128,128,15,0,0,0,0,0};
-    assert(receiver.receive(data,10) && !receiver.buttons);
+    assert(receiver.receive(data,10) && !receiver.nes());
     constexpr uint8_t hats[]={gamepad::Up,gamepad::Up|gamepad::Right,gamepad::Right,gamepad::Down|gamepad::Right,
         gamepad::Down,gamepad::Down|gamepad::Left,gamepad::Left,gamepad::Up|gamepad::Left};
     for(unsigned h=0;h<8;++h) {
         data[4]=h; data[5]=3; data[6]=12;
-        assert(receiver.receive(data,10) && receiver.buttons==(hats[h]|15));
+        assert(receiver.receive(data,10) && receiver.nes()==(hats[h]|15));
     }
-    receiver.release(); assert(!receiver.buttons);
+    receiver.release(); assert(!receiver.nes());
     for(unsigned length=0;length<13;++length) if(length!=10) assert(!receiver.receive(data,length));
     data[5]=data[6]=0;
     for(unsigned h=0;h<256;++h) {
         data[4]=h; data[9]=0xa5; // Padding does not affect keys or direction.
-        assert(receiver.receive(data,10) && receiver.buttons==((h&15)<8?hats[h&15]:0));
+        assert(receiver.receive(data,10) && receiver.nes()==((h&15)<8?hats[h&15]:0));
     }
     assert(!receiver.receive(nullptr,10));
     uint8_t address[6];
-    assert(gamepad::address("Aa:BB:cc:DD:ee:FF",address) && address[0]==0xaa && address[5]==0xff);
+    assert(bluetooth::address("Aa:BB:cc:DD:ee:FF",address) && address[0]==0xaa && address[5]==0xff);
     for(const char *s:{"","AA:BB:CC:DD:EE:FG","AA:BB:CC:DD:EE:FFx","AA-BB:CC:DD:EE:FF"})
-        assert(!gamepad::address(s,address));
+        assert(!bluetooth::address(s,address));
     uint16_t uuid=0;
-    assert(gamepad::uuid16("0x1812",uuid) && uuid==0x1812);
-    assert(gamepad::uuid16("0XABcd",uuid) && uuid==0xabcd);
+    assert(bluetooth::uuid16("0x1812",uuid) && uuid==0x1812);
+    assert(bluetooth::uuid16("0XABcd",uuid) && uuid==0xabcd);
     for(const char *s:{"","1812","0x181","0x1812x","0xG812","0x0000"})
-        assert(!gamepad::uuid16(s,uuid));
+        assert(!bluetooth::uuid16(s,uuid));
 
     disk=true; ble::init(); ble::poll(); assert(!inits && !polls);
-    disk=false; storage::config.ble_enabled=false; ble::init(); assert(!inits);
-    ble::command("ble on"); ble::poll(); assert(inits==1 && on==1);
+    disk=false; storage::config.ble_enabled=false;
+    ble::configure({false,0x1812,{}},false); ble::init(); assert(!inits);
+    controllers::command("ble on"); ble::poll(); assert(inits==1 && on==1);
     event({BTSTACK_EVENT_STATE,1,HCI_STATE_WORKING}); assert(scans==1);
     advance(60000); assert(scans==1 && !off); // Healthy idle scanning never restarts the controller.
     advertise(0x180f); assert(!connects); // Ignore battery-only peripherals.
@@ -445,24 +525,24 @@ int main(int argc,char **argv) {
     advance(30000); advertise(); assert(connects==before+1); linked(); valid_map=true;
     ready(0x0e); assert(disconnects==2); disconnected(); advance(1000);
     // Explicit target accepts only matching address and address type.
-    ble::command("ble target AA:BB:CC:DD:EE:FF public"); ble::poll();
-    ble::command("ble target AA:BB:CC:DD:EE:FF random extra");
-    assert(!storage::config.ble_random); // Invalid arguments preserve settings.
+    controllers::command("ble target AA:BB:CC:DD:EE:FF public"); ble::poll();
+    controllers::command("ble target AA:BB:CC:DD:EE:FF random extra");
+    assert(!storage::config.ble.peers[0].random); // Invalid arguments preserve settings.
     before=connects; advertise(); advertise(0x1812,0,0xab); assert(connects==before);
     advertise(0x180f,0); assert(connects==before+1); linked(); ready(); report(0,1);
     assert(ble::buttons());
-    ble::command("ble off"); ble::poll(); assert(!ble::buttons() && disconnects==3);
+    controllers::command("ble off"); ble::poll(); assert(!ble::buttons() && disconnects==3);
     disconnected(); ble::poll(); assert(off==1);
     event({BTSTACK_EVENT_STATE,1,HCI_STATE_OFF});
-    ble::command("ble on"); ble::poll(); assert(on==2 && inits==1); // No full stack reinit.
+    controllers::command("ble on"); ble::poll(); assert(on==2 && inits==1); // No full stack reinit.
     event({BTSTACK_EVENT_STATE,1,HCI_STATE_WORKING});
-    ble::command("ble target auto"); ble::poll(); advertise();
+    controllers::command("ble target auto"); ble::poll(); advertise();
     advance(10000); assert(cancels==1); linked(ERROR_CODE_UNKNOWN_CONNECTION_IDENTIFIER);
     ble::poll(); finish_restart(); advertise(); linked();
     before=disconnects; advance(10000); assert(disconnects==before+1); // Discovery timeout.
     disconnected(); advance(30000); advertise();
-    ble::command("ble off"); ble::poll(); before=scans;
-    ble::command("ble on"); ble::poll(); assert(scans==before); // Wait for connect cancellation.
+    controllers::command("ble off"); ble::poll(); before=scans;
+    controllers::command("ble on"); ble::poll(); assert(scans==before); // Wait for connect cancellation.
     linked(ERROR_CODE_UNKNOWN_CONNECTION_IDENTIFIER); advance(1000); assert(scans==before+1);
     connect_result=ERROR_CODE_COMMAND_DISALLOWED; advertise(); before=scans;
     ble::poll(); finish_restart(); assert(scans==before+1); connect_result=0;

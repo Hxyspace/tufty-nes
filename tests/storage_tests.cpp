@@ -67,8 +67,6 @@ int main(int argc,char **argv) {
     input.read(reinterpret_cast<char *>(flash+kSystem.offset),kSystem.bytes); assert(input.gcount()==kSystem.bytes);
     std::vector<uint8_t> original(flash,flash+16*1024*1024);
     std::string scenario=argc==4?argv[3]:"";
-    bool gamepad_override=scenario=="gamepad_override";
-    bool gamepad_missing=scenario=="gamepad_missing_fields";
     bool gamepad_no_state=scenario=="gamepad_no_state";
     bool blank=argc==4 && (std::string(argv[3])=="blank" || gamepad_no_state);
     bool corrupt=argc==4 && std::string(argv[3])=="corrupt";
@@ -77,25 +75,37 @@ int main(int argc,char **argv) {
     bool custom_ble=argc==4 && (std::string(argv[3])=="ble" || scenario.rfind("gamepad_",0)==0);
     bool bad_peer=argc==4 && std::string(argv[3])=="bad_peer";
     bool bad_ble=argc==4 && std::string(argv[3])=="bad_ble";
+    bool policy=scenario=="policy";
+    bool bad_policy=scenario=="bad_policy" || scenario=="duplicate_peer";
     const char *ble=custom_ble?"\"ble_enabled\":false,\"ble_peer\":\"AA:BB:CC:DD:EE:FF\",\"ble_random\":true":
         bad_peer?"\"ble_peer\":\"garbage\"":bad_ble?"\"ble_enabled\":1":nullptr;
+    if(policy) ble="\"serial_enabled\":false,\"ble_mode\":\"whitelist\",\"ble_preferred\":1,\"ble_whitelist\":[{\"mac\":\"AA:BB:CC:DD:EE:FF\",\"random\":false},{\"mac\":\"AA:BB:CC:DD:EE:FF\",\"random\":true}]";
+    if(bad_policy) ble="\"serial_enabled\":false,\"ble_mode\":\"whitelist\",\"ble_preferred\":0,\"ble_whitelist\":[]";
+    if(scenario=="duplicate_peer") ble="\"ble_whitelist\":[{\"mac\":\"AA:BB:CC:DD:EE:FF\",\"random\":false},{\"mac\":\"aa:bb:cc:dd:ee:ff\",\"random\":false}]";
     if(!blank) fixture_state(corrupt,idle_off?"0":bad_idle?"86401":nullptr,ble);
-    if(blank || corrupt || bad_idle || bad_peer || bad_ble) {
+    if(blank || corrupt || bad_idle || bad_peer || bad_ble || bad_policy) {
         std::vector<uint8_t> before(flash,flash+16*1024*1024);
         storage::init(); assert(storage::mounted() && !storage::state_ready());
-        if(gamepad_no_state) assert(std::string(storage::config.ble_peer)=="03:25:20:32:28:98");
+        assert(!storage::config.ble.count && storage::config.serial_enabled);
         assert(!storage::save());
         assert(std::memcmp(flash,before.data(),before.size())==0);
         return 0;
     }
     storage::init(); assert(storage::mounted() && storage::state_ready());
-    assert(storage::config.controller==(gamepad_override?456:23) && storage::config.brightness==67 && storage::config.swap_ab);
+    assert(storage::config.controller==23 && storage::config.brightness==67 && storage::config.swap_ab);
     assert(std::string(storage::config.last_rom)=="Sample Game.nes");
     assert(storage::config.menu_sleep_seconds==(idle_off?0u:300u)); // Old/default and disabled settings.
-    assert(storage::config.ble_enabled==(gamepad_override || !custom_ble));
-    assert(storage::config.ble_random==(!gamepad_override && custom_ble));
-    assert(std::string(storage::config.ble_peer)==((gamepad_override || gamepad_missing)?"03:25:20:32:28:98":custom_ble?"AA:BB:CC:DD:EE:FF":""));
-    assert(storage::config.ble_scan_uuid==(gamepad_override?0x180f:0x1812));
+    assert(storage::config.ble_enabled==!custom_ble);
+    assert(storage::config.serial_enabled==!policy);
+    assert(storage::config.ble.count==(policy?2:custom_ble?1:0));
+    if(custom_ble || policy) {
+        assert(storage::config.ble.mode==bluetooth::Mode::WhitelistOnly);
+        assert(storage::config.ble.preferred==(policy?1:0));
+        assert(storage::config.ble.peers[custom_ble?0:1].random);
+        char mac[18]; storage::config.ble.peers[0].text(mac);
+        assert(std::string(mac)=="AA:BB:CC:DD:EE:FF");
+    }
+    assert(storage::config.ble_scan_uuid==0x1812);
     assert(flashfat::disk.sector_size==std::stoi(argv[2]));
     storage::scan(); assert(storage::count==2);
     bool unicode=false;
@@ -106,17 +116,22 @@ int main(int argc,char **argv) {
     ines::Image image; assert(ines::inspect(data,bytes,image));
     storage::config.controller=65535; storage::config.brightness=35; storage::config.swap_ab=true;
     storage::config.menu_sleep_seconds=0;
-    storage::config.ble_enabled=false; storage::config.ble_random=true;
+    storage::config.ble_enabled=false; storage::config.serial_enabled=false;
     storage::config.ble_scan_uuid=0x1812;
-    std::strcpy(storage::config.ble_peer,"AA:BB:CC:DD:EE:FF");
+    storage::config.ble={}; bluetooth::Peer key;
+    assert(bluetooth::address("AA:BB:CC:DD:EE:FF",key.address)); key.random=true;
+    assert(storage::config.ble.add(key)); storage::config.ble.preferred=0;
+    storage::config.ble.mode=bluetooth::Mode::WhitelistOnly;
     std::strcpy(storage::config.last_rom,"测试.nes");
     assert(storage::save());
     char text[1024]; size_t actual;
     assert(storage::read_file("/state/nes.json",text,sizeof(text)-1,actual)); text[actual]=0;
     assert(std::strstr(text,"65535") && std::strstr(text,"测试.nes"));
     assert(std::strstr(text,"\"menu_sleep_seconds\":0"));
-    assert(std::strstr(text,"\"ble_enabled\":false") && std::strstr(text,"\"ble_random\":true") &&
-           std::strstr(text,"\"ble_peer\":\"AA:BB:CC:DD:EE:FF\""));
+    assert(std::strstr(text,"\"ble_enabled\":false") && std::strstr(text,"\"serial_enabled\":false") &&
+           std::strstr(text,"\"ble_whitelist\":[{\"mac\":\"AA:BB:CC:DD:EE:FF\",\"random\":true}]"));
+    assert(std::strstr(text,"\"ble_mode\":\"whitelist\"") && std::strstr(text,"\"ble_preferred\":0"));
+    assert(!std::strstr(text,"ble_peer\"") && !std::strstr(text,"ble_random\""));
     assert(std::strstr(text,"\"ble_scan_uuid\":\"0x1812\""));
     assert(storage::read_file("/state/settings.json",text,sizeof(text)-1,actual)); text[actual]=0;
     assert(std::string(text)=="{\"brightness\":42}");

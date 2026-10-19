@@ -81,7 +81,7 @@ python tools/serial_gamepad.py
 
 开启 XTARK BLE 手柄或安卓手柄应用的 NES / XTARK HID 模式后，Tufty 默认自动连接。十字键或左摇杆控制方向，A/B、Select/Start 控制游戏；左右摇杆回中并同时按下（L3+R3）1.5 秒返回菜单，安卓也可直接使用 Home。详见 [BLE 手柄](docs/usage.md#ble-手柄)。
 
-固定实体手柄 MAC 时，将 [手柄配置示例](examples/gamepad.json) 复制到设备磁盘的 `config/gamepad.json` 并填写地址。安卓通常使用自动连接，无需固定 MAC。
+串口与 BLE 同时连接时，只使用一个活跃远程手柄，本机按键始终可用。可通过 Console 分别关闭串口或 BLE，扫描设备并保存白名单，设置保存在 `/state`。详见 [连接设置](docs/usage.md#连接设置)。
 
 ## 文档
 

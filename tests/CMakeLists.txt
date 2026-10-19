@@ -25,6 +25,10 @@ include_directories(${runtime} ${root}/config ${upstream}/drivers/fatfs
   ${root}/lib/littlefs ${root}/lib/cjson ${CMAKE_CURRENT_LIST_DIR}/stubs)
 add_executable(protocol_tests protocol_tests.cpp ${runtime}/protocol.cpp ${runtime}/gamepad.cpp)
 add_test(NAME protocol COMMAND protocol_tests)
+add_executable(input_tests input_tests.cpp ${runtime}/gamepad.cpp ${runtime}/input.cpp)
+add_test(NAME input COMMAND input_tests)
+add_executable(bluetooth_manager_tests bluetooth_manager_tests.cpp ${runtime}/bluetooth_manager.cpp)
+add_test(NAME bluetooth_manager COMMAND bluetooth_manager_tests)
 add_executable(ppu_tests ppu_tests.cpp ${upstream}/infones/InfoNES.cpp)
 target_include_directories(ppu_tests BEFORE PRIVATE ${CMAKE_CURRENT_LIST_DIR}/core_stubs ${upstream}/infones)
 # Upstream CPU/save-state code is not needed for these PPU/mapper tests.
@@ -32,7 +36,8 @@ target_compile_options(ppu_tests PRIVATE -ffunction-sections -fdata-sections)
 target_link_options(ppu_tests PRIVATE -Wl,--gc-sections)
 add_test(NAME ppu_mapper48 COMMAND ppu_tests)
 set(btstack ${root}/lib/pico-sdk/lib/btstack)
-add_executable(ble_tests ble_tests.cpp ${runtime}/ble.cpp ${runtime}/gamepad.cpp
+add_executable(ble_tests ble_tests.cpp ${runtime}/ble.cpp ${runtime}/ble_gamepad.cpp ${runtime}/bluetooth_manager.cpp ${runtime}/gamepad.cpp
+  ${runtime}/input.cpp ${runtime}/controllers.cpp ${runtime}/protocol.cpp
   ${btstack}/src/btstack_hid_parser.c ${btstack}/src/btstack_util.c ${btstack}/src/ad_parser.c)
 target_include_directories(ble_tests PRIVATE ${btstack}/src ${btstack}/3rd-party/micro-ecc)
 target_compile_definitions(ble_tests PRIVATE ENABLE_BLE=1)
@@ -40,7 +45,7 @@ add_test(NAME ble_hid COMMAND ble_tests)
 foreach(scenario sync_cancel sync_disconnect lost_cancel startup_timeout recovery_off home scan_uuid
     cancel_stale_scan cancel_late_success connect_failed request_failed
     idle_link disconnect_timeout pairing_failure physical_layout
-    left_stick home_combo remote_close)
+    left_stick home_combo remote_close discovery controls selection)
   add_test(NAME ble_${scenario} COMMAND ble_tests ${scenario})
 endforeach()
 add_executable(console_tests console_tests.cpp)
@@ -69,8 +74,8 @@ add_test(NAME state_invalid_idle COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURREN
 add_test(NAME state_ble COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/storage_fixture.py $<TARGET_FILE:storage_tests> 4096 ble)
 add_test(NAME state_invalid_ble_peer COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/storage_fixture.py $<TARGET_FILE:storage_tests> 4096 bad_peer)
 add_test(NAME state_invalid_ble_type COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/storage_fixture.py $<TARGET_FILE:storage_tests> 4096 bad_ble)
-foreach(scenario override invalid bad_uuid missing_fields large no_state)
-  add_test(NAME gamepad_config_${scenario} COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/storage_fixture.py $<TARGET_FILE:storage_tests> 4096 gamepad_${scenario})
+foreach(scenario policy bad_policy duplicate_peer gamepad_override gamepad_no_state)
+  add_test(NAME state_${scenario} COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/storage_fixture.py $<TARGET_FILE:storage_tests> 4096 ${scenario})
 endforeach()
 add_test(NAME host_sender COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_sender.py)
 add_test(NAME rom_preparation COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_roms.py)

@@ -68,8 +68,10 @@ class Sender:
                     elif not self.closed:
                         if line==b'#TGP:APP': self.begin()
                         elif line==b'#TGP:READY:'+self.nonce+b':3':
+                            starting=not self.ready
                             self.ready=True
                             self.last_alive=self.clock()
+                            if starting: self.send(NEUTRAL_REPORT)
                         elif self.ready and line==b'#TGP:ALIVE:'+self.nonce:
                             self.last_alive=self.clock()
                 self.line.clear()

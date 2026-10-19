@@ -5,6 +5,7 @@
 #include "console.hpp"
 #include "power.hpp"
 #include "ble.hpp"
+#include "controllers.hpp"
 #include "disk_ui.hpp"
 #include "disk_activity.hpp"
 #include "hardware/watchdog.h"
@@ -135,11 +136,14 @@ static void command(const char *s) {
     if(power::pending() && std::strcmp(s,"power status")) {
         std::printf("POWER SLEEP: PENDING; command rejected\n"); return;
     }
-    if(power::command(s) || ble::command(s)) return;
+    if(power::command(s) || controllers::command(s) || ble::command(s)) return;
     if(!std::strcmp(s,"help")) {
         std::printf("help | status | usb disk | bootsel | rescan | save | brightness 1..100 | padid 1..65535 | swapab 0/1\n"
                     "power status | power sleep [seconds] | power idle 0..86400\n"
-                    "ble status | ble on | ble off | ble scan | ble target auto | ble target MAC public|random\n");
+                    "pad status | serial on|off | ble status | ble on|off | ble scan\n"
+                    "ble discover [stop] | ble devices | ble connect MAC public|random\n"
+                    "ble whitelist [clear] | ble allow|forget|prefer MAC public|random | ble mode auto|whitelist\n"
+                    "ble target auto | ble target MAC public|random | ble trace on|off\n");
     } else if(!std::strcmp(s,"status")) {
         std::printf("FAT=%u sector=%u State=%u ROMs=%u pad=%u packets=%lu rejected=%lu dirty=%u\n",
             storage::mounted(),flashfat::disk.sector_size,storage::state_ready(),unsigned(storage::count),pad.active,
@@ -169,7 +173,7 @@ void poll() {
     bool connected=tud_cdc_n_connected(1);
     if(connected!=was_connected) {
         pad.reset(); protocol_tx.head=protocol_tx.used=0;
-        if(connected && !mode) pad.announce();
+        if(connected && !mode && storage::config.serial_enabled) pad.announce();
         was_connected=connected;
     }
     bool c0=tud_cdc_n_connected(0);
@@ -184,12 +188,12 @@ void poll() {
     uint32_t now=to_ms_since_boot(get_absolute_time());
     for(int budget=0;budget<256 && tud_cdc_n_available(1);++budget) {
         int c=tud_cdc_n_read_char(1);
-        if(connected && !mode) {
+        if(connected && !mode && storage::config.serial_enabled) {
             pad.byte(c,now);
-            if(pad.input.buttons || pad.input.home) power::activity();
+            if(pad.input.contributing() && (pad.input.nes() || pad.input.home)) power::activity();
         }
     }
-    if(!mode && pad.poll(now)) power::activity();
+    if(!mode && storage::config.serial_enabled && pad.poll(now) && pad.input.contributing()) power::activity();
     console_tx.drain(0); protocol_tx.drain(1);
 }
 void shutdown() {

@@ -43,7 +43,7 @@ add_executable(nes
   src/main.cpp src/display.cpp src/menu.cpp src/storage.cpp src/fat_disk.cpp
   src/rom_store.cpp src/usb.cpp src/descriptors.cpp src/protocol.cpp
   src/power.cpp src/power_board.cpp src/power_reset.cpp
-  src/disk_ui.cpp src/ble.cpp src/ble_stack.c src/gamepad.cpp src/radio_wait.c
+  src/disk_ui.cpp src/ble.cpp src/ble_gamepad.cpp src/bluetooth_manager.cpp src/ble_stack.c src/gamepad.cpp src/input.cpp src/controllers.cpp src/radio_wait.c
   "${upstream}/infones/InfoNES.cpp" "${upstream}/infones/InfoNES_Mapper.cpp"
   "${upstream}/infones/InfoNES_pAPU.cpp" "${upstream}/infones/K6502.cpp"
   "${fatfs}/ff.c" "${fatfs}/ffunicode.c"

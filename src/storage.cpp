@@ -2,7 +2,7 @@
 #include "fat_disk.hpp"
 #include "rom_store.hpp"
 #include "display.hpp"
-#include "gamepad.hpp"
+#include "bluetooth_config.hpp"
 #include "ff.h"
 #include "lfs.h"
 #include "cJSON.h"
@@ -68,7 +68,7 @@ static int state_erase(const lfs_config *,lfs_block_t block) {
 }
 static int state_sync(const lfs_config *) {return 0;}
 static void load_config() {
-    char text[1024]; size_t actual=0;
+    char text[2048]; size_t actual=0;
     // A missing NES record is normal; other applications' State files stay intact.
     lfs_info info{};
     int rc=lfs_stat(&lfs,"/state/nes.json",&info);
@@ -76,7 +76,7 @@ static void load_config() {
     if(rc || info.type!=LFS_TYPE_REG || info.size>=sizeof(text) ||
        !read_file("/state/nes.json",text,sizeof(text)-1,actual)) {writable_config=false; return;}
     text[actual]=0;
-    cJSON *root=cJSON_Parse(text);
+    cJSON *root=cJSON_ParseWithOpts(text,nullptr,true);
     if(!cJSON_IsObject(root)) {cJSON_Delete(root); writable_config=false; return;}
     auto *id=cJSON_GetObjectItemCaseSensitive(root,"controller_id");
     auto *level=cJSON_GetObjectItemCaseSensitive(root,"brightness");
@@ -84,6 +84,7 @@ static void load_config() {
     auto *last=cJSON_GetObjectItemCaseSensitive(root,"last_rom");
     auto *idle=cJSON_GetObjectItemCaseSensitive(root,"menu_sleep_seconds");
     auto *ble=cJSON_GetObjectItemCaseSensitive(root,"ble_enabled");
+    auto *serial=cJSON_GetObjectItemCaseSensitive(root,"serial_enabled");
     auto *peer=cJSON_GetObjectItemCaseSensitive(root,"ble_peer");
     auto *random=cJSON_GetObjectItemCaseSensitive(root,"ble_random");
     auto *uuid=cJSON_GetObjectItemCaseSensitive(root,"ble_scan_uuid");
@@ -93,57 +94,55 @@ static void load_config() {
        (level && (!cJSON_IsNumber(level) || level->valuedouble!=level->valueint || level->valueint<1 || level->valueint>100)) ||
        (swap && !cJSON_IsBool(swap)) || (last && (!cJSON_IsString(last) || std::strlen(last->valuestring)>255)) ||
        (idle && (!cJSON_IsNumber(idle) || idle->valuedouble!=idle->valueint || idle->valueint<0 || idle->valueint>86400)) ||
+       (serial && !cJSON_IsBool(serial)) ||
        (ble && !cJSON_IsBool(ble)) || (random && !cJSON_IsBool(random)) ||
-       (uuid && (!cJSON_IsString(uuid) || !gamepad::uuid16(uuid->valuestring,scan_uuid))) ||
-       (peer && (!cJSON_IsString(peer) || (peer->valuestring[0] && !gamepad::address(peer->valuestring,address))))) {
+       (uuid && (!cJSON_IsString(uuid) || !bluetooth::uuid16(uuid->valuestring,scan_uuid))) ||
+       (peer && (!cJSON_IsString(peer) || (peer->valuestring[0] && !bluetooth::address(peer->valuestring,address))))) {
         writable_config=false; cJSON_Delete(root); return;
     }
+    bluetooth::Policy policy;
+    auto *mode=cJSON_GetObjectItemCaseSensitive(root,"ble_mode");
+    auto *list=cJSON_GetObjectItemCaseSensitive(root,"ble_whitelist");
+    auto *preferred=cJSON_GetObjectItemCaseSensitive(root,"ble_preferred");
+    bool valid=(!mode || (cJSON_IsString(mode) &&
+        (!std::strcmp(mode->valuestring,"auto") || !std::strcmp(mode->valuestring,"whitelist")))) &&
+        (!list || (cJSON_IsArray(list) && cJSON_GetArraySize(list)<=int(bluetooth::Policy::Capacity)));
+    if(valid && mode) policy.mode=!std::strcmp(mode->valuestring,"whitelist")?
+        bluetooth::Mode::WhitelistOnly:bluetooth::Mode::AutoCompatible;
+    if(valid && list) {
+        cJSON *item=nullptr;
+        cJSON_ArrayForEach(item,list) {
+            auto *mac=cJSON_GetObjectItemCaseSensitive(item,"mac");
+            auto *type=cJSON_GetObjectItemCaseSensitive(item,"random");
+            bluetooth::Peer key;
+            if(!cJSON_IsObject(item) || !cJSON_IsString(mac) || !cJSON_IsBool(type) ||
+               !bluetooth::address(mac->valuestring,key.address)) {valid=false; break;}
+            key.random=cJSON_IsTrue(type);
+            if(policy.find(key)>=0 || !policy.add(key)) {valid=false; break;}
+        }
+    }
+    // Migrate only the old /state fields; the former FAT override is not read.
+    if(valid && !mode && !list && peer && peer->valuestring[0]) {
+        bluetooth::Peer key; bluetooth::address(peer->valuestring,key.address);
+        key.random=random && cJSON_IsTrue(random);
+        policy.add(key); policy.preferred=0; policy.mode=bluetooth::Mode::WhitelistOnly;
+    }
+    if(preferred) {
+        if(!cJSON_IsNumber(preferred) || preferred->valuedouble!=preferred->valueint ||
+           (preferred->valueint!=-1 && (preferred->valueint<0 || preferred->valueint>=policy.count))) valid=false;
+        else policy.preferred=preferred->valueint<0?255:uint8_t(preferred->valueint);
+    }
+    if(!valid) {writable_config=false; cJSON_Delete(root); return;}
     if(id) config.controller=id->valueint;
     if(level) config.brightness=level->valueint;
     if(swap) config.swap_ab=cJSON_IsTrue(swap);
     if(last) std::snprintf(config.last_rom,sizeof(config.last_rom),"%s",last->valuestring);
     if(idle) config.menu_sleep_seconds=idle->valueint;
     if(ble) config.ble_enabled=cJSON_IsTrue(ble);
-    if(random) config.ble_random=cJSON_IsTrue(random);
+    if(serial) config.serial_enabled=cJSON_IsTrue(serial);
+    config.ble=policy;
     config.ble_scan_uuid=scan_uuid;
-    if(peer) std::snprintf(config.ble_peer,sizeof(config.ble_peer),"%s",peer->valuestring);
     cJSON_Delete(root);
-}
-static void load_gamepad_config() {
-    // User-editable startup overrides on the USB-visible FAT volume. Runtime
-    // saves still go to /state; never write FAT while it belongs to firmware.
-    FILINFO info{};
-    FRESULT rc=f_stat("/config/gamepad.json",&info);
-    if(rc==FR_NO_FILE || rc==FR_NO_PATH) return;
-    char text[1024]; size_t actual=0;
-    if(rc!=FR_OK || (info.fattrib&AM_DIR) ||
-       !read_file("/system/config/gamepad.json",text,sizeof(text)-1,actual)) {
-        std::printf("Gamepad config: cannot read /system/config/gamepad.json; settings retained\n");
-        return;
-    }
-    text[actual]=0;
-    cJSON *root=cJSON_ParseWithOpts(text,nullptr,true);
-    auto *id=cJSON_GetObjectItemCaseSensitive(root,"controller_id");
-    auto *ble=cJSON_GetObjectItemCaseSensitive(root,"ble_enabled");
-    auto *peer=cJSON_GetObjectItemCaseSensitive(root,"ble_peer");
-    auto *random=cJSON_GetObjectItemCaseSensitive(root,"ble_random");
-    auto *uuid=cJSON_GetObjectItemCaseSensitive(root,"ble_scan_uuid");
-    uint8_t address[6];
-    uint16_t scan_uuid=config.ble_scan_uuid;
-    bool valid=cJSON_IsObject(root) &&
-        (!id || (cJSON_IsNumber(id) && id->valuedouble==id->valueint && id->valueint>=1 && id->valueint<=65535)) &&
-        (!ble || cJSON_IsBool(ble)) && (!random || cJSON_IsBool(random)) &&
-        (!uuid || (cJSON_IsString(uuid) && gamepad::uuid16(uuid->valuestring,scan_uuid))) &&
-        (!peer || (cJSON_IsString(peer) && (!peer->valuestring[0] || gamepad::address(peer->valuestring,address))));
-    if(valid) {
-        if(id) config.controller=id->valueint;
-        if(ble) config.ble_enabled=cJSON_IsTrue(ble);
-        if(random) config.ble_random=cJSON_IsTrue(random);
-        config.ble_scan_uuid=scan_uuid;
-        if(peer) std::snprintf(config.ble_peer,sizeof(config.ble_peer),"%s",peer->valuestring);
-    }
-    cJSON_Delete(root);
-    std::printf("Gamepad config: %s /system/config/gamepad.json\n",valid?"loaded":"invalid; ignored");
 }
 void init(bool use_state) {
     flashfat::disk.read=read_system;
@@ -161,7 +160,6 @@ void init(bool use_state) {
         state_mounted=lfs_mount(&lfs,&lc)==0;
         if(state_mounted) load_config();
     }
-    if(use_state && fat_mounted) load_gamepad_config();
     if(!fat_mounted) std::snprintf(error,sizeof(error),"Invalid /system FAT; no format performed");
 }
 bool mounted() {return fat_mounted;}
@@ -236,11 +234,22 @@ bool save() {
         cJSON_AddNumberToObject(root,"brightness",config.brightness) &&
         cJSON_AddBoolToObject(root,"swap_ab",config.swap_ab) &&
         cJSON_AddNumberToObject(root,"menu_sleep_seconds",config.menu_sleep_seconds) &&
+        cJSON_AddBoolToObject(root,"serial_enabled",config.serial_enabled) &&
         cJSON_AddBoolToObject(root,"ble_enabled",config.ble_enabled) &&
-        cJSON_AddBoolToObject(root,"ble_random",config.ble_random) &&
-        cJSON_AddStringToObject(root,"ble_peer",config.ble_peer) &&
+        cJSON_AddStringToObject(root,"ble_mode",config.ble.mode==bluetooth::Mode::WhitelistOnly?"whitelist":"auto") &&
+        cJSON_AddNumberToObject(root,"ble_preferred",config.ble.preferred==255?-1:config.ble.preferred) &&
         cJSON_AddStringToObject(root,"ble_scan_uuid",uuid) &&
         cJSON_AddStringToObject(root,"last_rom",config.last_rom);
+    auto *list=cJSON_AddArrayToObject(root,"ble_whitelist");
+    ok=ok && list;
+    for(unsigned i=0;ok && i<config.ble.count;++i) {
+        auto *item=cJSON_CreateObject();
+        if(!item) {ok=false; break;}
+        char mac[18]; config.ble.peers[i].text(mac);
+        ok=cJSON_AddStringToObject(item,"mac",mac) &&
+            cJSON_AddBoolToObject(item,"random",config.ble.peers[i].random);
+        if(!ok || !cJSON_AddItemToArray(list,item)) {cJSON_Delete(item); ok=false;}
+    }
     char *json=ok?cJSON_PrintUnformatted(root):nullptr; cJSON_Delete(root);
     if(!json) return false;
     display::pause(true);

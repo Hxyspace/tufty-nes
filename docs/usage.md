@@ -22,6 +22,8 @@ Console 设置：115200 波特率、关闭本地回显、启用 DTR。连接后�
 | `brightness 1..100` | 调整屏幕亮度 |
 | `padid 1..65535` | 设置手柄 ID，默认 1 |
 | `swapab 0/1` | 关闭或启用 A/B 互换 |
+| `pad status` | 查看活跃远程来源、各来源开关与输入可用状态 |
+| `serial on` / `serial off` | 启用 / 关闭串口手柄，Console 始终可用 |
 | `save` | 保存配置 |
 | `rescan` | 返回菜单并重新扫描游戏 |
 | `usb disk` | 进入 USB 磁盘模式 |
@@ -37,8 +39,18 @@ Console 设置：115200 波特率、关闭本地回显、启用 DTR。连接后�
 | `ble target MAC public` | 指定 public 地址目标 |
 | `ble target MAC random` | 指定 random 地址目标 |
 | `ble trace on` / `ble trace off` | 开关 HID 描述符诊断，默认关闭 |
+| `ble discover` / `ble discover stop` | 限时发现附近设备 / 退出发现并恢复自动连接 |
+| `ble devices` | 查看发现的 MAC、地址类型、名称、信号和 HID 标志 |
+| `ble connect MAC public\|random` | 临时连接选中的设备，不修改白名单 |
+| `ble allow MAC public\|random` | 添加白名单 |
+| `ble prefer MAC public\|random` | 添加白名单并设为首选 |
+| `ble forget MAC public\|random` | 删除白名单条目 |
+| `ble whitelist` / `ble whitelist clear` | 查看 / 清空白名单 |
+| `ble mode auto` / `ble mode whitelist` | 自动连接兼容设备 / 只连接白名单 |
 
 修改设置后执行 `save`。启动不同游戏、通过命令进入磁盘模式前也会保存配置；保存失败时会显示错误。`usb disk`、`bootsel` 会先回复状态再切换。
+
+串口与 BLE 同时可用时，最先成为活跃来源的手柄持续控制，另一来源保持连接但不混入按键。活跃来源禁用、断开或输入会话失效后才交接；接替的手柄需先松开按键、回中摇杆。BLE 静置不触发交接。本机按键始终可用，使用 `pad status` 查看当前来源。
 
 ## 休眠与唤醒
 
@@ -88,7 +100,7 @@ python3 tools/serial_gamepad.py --port /dev/ttyACM1 --buttons 0x80 --seconds 3
 3. 十字键或左摇杆控制方向，A 启动游戏；游戏中使用 A/B、Select/Start。十字键优先于摇杆，右摇杆和肩键不映射 NES 操作。
 4. 返回菜单时，将两个摇杆回中，松开其他按键及扳机，同时按下左右摇杆（L3+R3）并保持 **1.5 秒**。触发后松开两个摇杆按键，再进行下一步操作。安卓可直接使用 Home，也可按 Tufty 自身的 Home。
 
-实体 XTARK 的 Home 键在当前模式下不发送游戏输入，使用上述组合键即可。串口、BLE 和 Tufty 自身按键可以同时使用；`swapab` 对合并后的 NES A/B 生效。
+实体 XTARK 的 Home 键在当前模式下不发送游戏输入，使用上述组合键即可。串口与 BLE 可同时连接，由一个活跃远程来源控制；Tufty 自身按键始终可用。`swapab` 对合并后的 NES A/B 生效。
 
 ### 连接设置
 
@@ -106,7 +118,20 @@ ble target auto
 save
 ```
 
-也可将 [手柄配置示例](../examples/gamepad.json) 复制到设备磁盘的 `config/gamepad.json`，填写自己的手柄 MAC。字段及优先级见 [存储说明](storage.md#从-usb-磁盘配置手柄)。BLE 不使用串口手柄的 `padid`。
+也可以先发现设备，再选择并保存白名单。`ble discover` 会断开当前 BLE 手柄并进入发现模式，约 10 秒后停止扫描，保留列表等待选择；发现期间不自动连接。用 `ble discover stop` 退出并恢复原连接策略。列表中的 HID 标志只表示广播服务，连接后仍需确认报文布局。
+
+```text
+ble discover
+ble devices
+ble prefer AA:BB:CC:DD:EE:FF public
+ble mode whitelist
+ble connect AA:BB:CC:DD:EE:FF public
+save
+```
+
+请替换成发现的地址和类型。白名单最多四项，首选设备有两秒扫描优先窗口，未发现时允许其他白名单设备连接。`ble target MAC public|random` 是替换为单设备白名单的快捷方式；`ble target auto` 保留列表并恢复自动模式。清空白名单不会自动切换模式，白名单模式下列表为空就不自动连接。
+
+设置统一保存到 `/state/nes.json`，不再读取磁盘 `config/gamepad.json`。安卓地址可能轮换，固定某次随机 MAC 不能保证重启后仍可连接，建议使用自动模式。BLE 不使用串口的 `padid`。`serial off` 只关闭手柄会话，不影响 Console。
 
 断连后会自动等待重连。安卓点“关闭手柄”后 Tufty 会断开并继续扫描，重新开启即可连接，无需关闭手机系统蓝牙。长时间不操作不会触发 BLE 超时重连；游戏与菜单空闲休眠规则仍然生效。休眠会关闭无线，需要用 Tufty 实体按键唤醒。USB 磁盘模式不启用手柄连接。
 

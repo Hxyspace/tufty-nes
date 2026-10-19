@@ -1,6 +1,6 @@
 # Tufty NES 手柄协议
 
-CDC1 串口和 BLE 共用十字节按键 Report，以及摇杆、Home 和组合键解析。两条连接各自保留输入状态，断开其中一路不会释放另一路的按键。本机 GPIO 直接映射为 NES 按键和 Home，与远程输入合并后应用 `swapab`。USB 磁盘模式不处理手柄输入。日常操作见 [使用指南](usage.md)。
+CDC1 串口和 BLE 共用十字节按键 Report，解码后保留全部按键、双摇杆和扳机压力。两条连接独立维护状态，同时只有一个活跃远程来源；另一来源不能抢占。活跃来源失效后切换到备用来源，等待其中立后接受输入。本机 GPIO 始终可用，合并后应用 `swapab`。USB 磁盘模式不处理手柄输入。日常操作见 [使用指南](usage.md)。
 
 ## USB 串口
 
@@ -13,15 +13,18 @@ CDC0（Console）用于设置，CDC1（Gamepad）用于手柄。CDC1 使用 1152
 ```text
 PC -> Tufty: #TGP:HELLO:0001:0123456789abcdef:3
 Tufty -> PC: #TGP:READY:0123456789abcdef:3
-PC -> Tufty: #TGP:5447500301000080808080020100000000
+PC -> Tufty: #TGP:5447500301000080808080ff0000000000
+PC -> Tufty: #TGP:5447500301000180808080020100000000
 Tufty -> PC: #TGP:ALIVE:0123456789abcdef
-PC -> Tufty: #TGP:54475003010001544750014259450000a5
+PC -> Tufty: #TGP:54475003010002544750014259450000a5
 Tufty -> PC: #TGP:BYE:0123456789abcdef
 ```
 
 `HELLO` 中的 ID 是 4 位十六进制（1–65535，默认 0001），必须与设备 `padid` 一致。nonce 是 16 位小写十六进制，每次新会话生成；发送器只接受匹配 nonce 和版本的 READY，ALIVE/BYE 也必须匹配 nonce。新会话、断开 DTR 或关闭 Report 均释放该路输入。重复同一 HELLO 不重置按键超时、组合键计时或序列号检查。
 
 每 120 ms 至少发送一个状态帧，输入变化时立即发送。设备每 500 ms 发 ALIVE；350 ms 无有效帧则释放按键、Home 并取消组合键计时，1200 ms 无有效帧则结束会话。PC 在握手等待或 ALIVE 超时 1200 ms 后重新握手。中立心跳不延后菜单自动休眠。
+
+新连接或来源交接时，需先发送一次中立状态以解除输入保护。Python 发送器在新会话 READY 后自动发送；重复 READY 不会打断当前按键。
 
 ### 状态帧
 
@@ -37,7 +40,7 @@ Tufty -> PC: #TGP:BYE:0123456789abcdef
 
 同一会话连续相同 sequence 的帧被拒绝；心跳和关闭 Report 也必须增加 sequence。不支持的版本、错误 ID、错误长度或非十六进制数据不更新有效帧计时。状态帧不携带 nonce，必须在握手后发送。
 
-上例第一帧为 ID 1、sequence 0、右+A；第二帧为 sequence 1 的主动关闭消息。旧版 v1/v2、无版本握手、MENU 和 END 命令已移除。PC 的 Esc 直接发送 Home 按下/松开状态，Ctrl+C 发送中立状态和关闭 Report 后退出。
+上例三帧的 sequence 分别为 0、1、2，依次表示中立、右+A、主动关闭。旧版 v1/v2、无版本握手、MENU 和 END 命令已移除。PC 的 Esc 直接发送 Home 按下/松开状态，Ctrl+C 发送中立状态和关闭 Report 后退出。
 
 ## BLE HID
 

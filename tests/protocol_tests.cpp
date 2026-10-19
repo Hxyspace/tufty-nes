@@ -24,7 +24,7 @@ static void hello(tgp::Receiver &r,uint32_t now=0) {
 }
 static void serial_tests() {
     tgp::Receiver r; r.send=send;
-    line(r,frame(neutral,0),0); assert(!r.active && !r.input.buttons);
+    line(r,frame(neutral,0),0); assert(!r.active && !r.input.nes());
     // Only v3 handshakes with the configured nonzero ID are accepted.
     for(const char *invalid:{"#TGP:HELLO:0002:0123456789abcdef:3\n",
         "#TGP:HELLO:0001:0123456789abcdef\n","#TGP:HELLO:0001:0123456789abcdef:2\n",
@@ -35,8 +35,8 @@ static void serial_tests() {
     uint8_t report[10]; std::memcpy(report,neutral,10);
     report[4]=2; report[5]=1;
     assert(frame(report,0)=="#TGP:5447500301000080808080020100000000\n");
-    line(r,frame(report,0),10); assert(r.input.buttons==(gamepad::Right|gamepad::A));
-    line(r,frame(neutral,0),20); assert(r.input.buttons==(gamepad::Right|gamepad::A)); // Duplicate.
+    line(r,frame(report,0),10); assert(r.input.nes()==(gamepad::Right|gamepad::A));
+    line(r,frame(neutral,0),20); assert(r.input.nes()==(gamepad::Right|gamepad::A)); // Duplicate.
     line(r,frame(neutral,1,2),20); assert(r.received==1); // Wrong ID.
     for(uint8_t version:{1,2,4}) line(r,frame(neutral,1,1,version),20);
     line(r,"#TGP:54475002010001ff\n",20); // Old eight-byte format.
@@ -45,26 +45,26 @@ static void serial_tests() {
     assert(r.received==1 && r.active && !r.input.home);
     hello(r,100); // Repeated HELLO must not reset input age or sequence tracking.
     line(r,frame(neutral,0),110); assert(r.received==1);
-    r.poll(359); assert(r.input.buttons);
-    r.poll(360); assert(!r.input.buttons && !r.input.home && r.active);
+    r.poll(359); assert(r.input.nes());
+    r.poll(360); assert(!r.input.nes() && !r.input.home && r.active);
     r.poll(502); assert(output.find("#TGP:ALIVE:0123456789abcdef\n")!=std::string::npos);
     r.poll(1210); assert(!r.active && output.find("#TGP:BYE:0123456789abcdef\n")!=std::string::npos);
 
     hello(r,1300);
-    line(r,std::string(150,'x')+frame(report,1),1310); assert(!r.input.buttons);
-    line(r,frame(report,255),1320); assert(r.input.buttons);
-    line(r,frame(neutral,0),1330); assert(!r.input.buttons); // Sequence wraps.
+    line(r,std::string(150,'x')+frame(report,1),1310); assert(!r.input.nes());
+    line(r,frame(report,255),1320); assert(r.input.nes());
+    line(r,frame(neutral,0),1330); assert(!r.input.nes()); // Sequence wraps.
     report[6]=16; line(r,frame(report,1),1340); assert(r.input.home);
     line(r,frame(neutral,2),1350); assert(!r.input.home);
     report[6]=0; line(r,frame(report,3),1360);
     // Garbage, bad hex, and partial frames cannot refresh the watchdog.
     std::string invalid=frame(neutral,4); invalid[20]='z'; line(r,invalid,1370);
     invalid=frame(neutral,4); invalid.erase(20,2); line(r,invalid,1380);
-    r.poll(1710); assert(!r.input.buttons && r.active);
-    line(r,frame(report,4),1720); assert(r.input.buttons);
+    r.poll(1710); assert(!r.input.nes() && r.active);
+    line(r,frame(report,4),1720); assert(r.input.nes());
     line(r,frame(gamepad::DisconnectReport,5),1730);
-    assert(!r.active && !r.input.buttons && !r.input.home);
-    line(r,frame(report,6),1740); assert(!r.active && !r.input.buttons);
+    assert(!r.active && !r.input.nes() && !r.input.home);
+    line(r,frame(report,6),1740); assert(!r.active && !r.input.nes());
 
     // Shared decoding: axes, D-pad precedence, and Home agree across transports.
     hello(r,2000); gamepad::Receiver ble;
@@ -75,7 +75,7 @@ static void serial_tests() {
     uint8_t seq=0;
     for(auto &sample:samples) {
         assert(ble.receive(sample,10,2000)); line(r,frame(sample,seq++),2000);
-        assert(r.input.buttons==ble.buttons && r.input.home==ble.home);
+        assert(r.input.nes()==ble.nes() && r.input.home==ble.home);
     }
     r.poll(2350); assert(!r.input.home && ble.home); // Serial timeout is isolated.
     r.reset(); assert(ble.home);
@@ -90,12 +90,12 @@ static void serial_tests() {
     line(r,frame(neutral,seq++),4520); assert(!r.input.home);
     line(r,frame(report,seq++),4600); r.poll(4950); assert(!r.input.home);
     line(r,frame(report,seq++),5000); r.poll(6000); assert(!r.input.home); // Stale reports cannot finish a gesture.
-    r.reset(); assert(!r.input.home && !r.input.buttons);
+    r.reset(); assert(!r.input.home && !r.input.nes());
 
     // A new nonce replaces held input and all gesture/hysteresis state.
     hello(r,7000); report[6]=16; line(r,frame(report,0),7000); assert(r.input.home);
     line(r,"#TGP:HELLO:0001:fedcba9876543210:3\n",7010);
-    assert(!r.input.home && !r.input.buttons && !r.seen);
+    assert(!r.input.home && !r.input.nes() && !r.seen);
     line(r,frame(neutral,0),7020); assert(r.received);
     // Unsigned time arithmetic also covers the millisecond counter wrapping.
     r.reset(); hello(r,0xffffff00u); report[6]=16; line(r,frame(report,0),0xffffff00u);
