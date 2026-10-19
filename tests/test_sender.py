@@ -128,6 +128,60 @@ class Tests(unittest.TestCase):
         for args in ((0,0,NEUTRAL_REPORT),(65536,0,NEUTRAL_REPORT),(1,0,b''),(1,0,b'x'*9),(1,0,b'x'*11),(1,0,10)):
             with self.assertRaises(ValueError): packet(*args)
 
+    def test_legacy_packets(self):
+        cases=((0,0),(UP,1),(DOWN,2),(LEFT,4),(RIGHT,8),(A,16),(B,32),
+               (SELECT,64),(START,128),(RIGHT|A,0x18),(B|SELECT|START,0xe0),
+               (UP|RIGHT,9),(DOWN|RIGHT,10),(DOWN|LEFT,6),(UP|LEFT,5))
+        for version in (1,2):
+            for buttons,wire_buttons in cases:
+                with self.subTest(version=version,buttons=buttons):
+                    expected=b'TGP'+bytes((version,0x34,0x12,0,wire_buttons))
+                    self.assertEqual(packet(0x1234,256,make_report(buttons),version),
+                                     b'#TGP:'+expected.hex().encode()+b'\n')
+            self.assertEqual(packet(1,0,make_report(home=True),version),
+                             packet(1,0,NEUTRAL_REPORT,version))
+        for buttons in range(256):
+            report=make_report(buttons)
+            v1=packet(1,0,report,1); v2=packet(1,0,report,2)
+            self.assertEqual(v1[:11],v2[:11])
+            self.assertEqual(v1[11:13],b'01'); self.assertEqual(v2[11:13],b'02')
+            self.assertEqual(v1[13:],v2[13:])
+        with self.assertRaises(ValueError): packet(1,0,NEUTRAL_REPORT,4)
+
+    def test_legacy_sender(self):
+        for version in (1,2):
+            with self.subTest(version=version):
+                w=Wire(); now=[0.0]
+                sender=Sender(w,clock=lambda:now[0],version=version)
+                self.assertEqual(w.tx[-1],b'#TGP:HELLO:0001:'+sender.nonce+b'\n')
+                w.rx=b'#TGP:READY:'+sender.nonce+b':3\n'; sender.poll()
+                self.assertFalse(sender.ready)
+                w.rx=b'#TGP:READY:'+sender.nonce+b'\n'; sender.poll()
+                self.assertTrue(sender.ready)
+                self.assertEqual(w.tx[-1],packet(1,0,NEUTRAL_REPORT,version))
+                report=make_report(B|SELECT|START)
+                sender.send(report)
+                self.assertEqual(w.tx[-1],packet(1,1,report,version))
+                count=len(w.tx); sender.send(report); self.assertEqual(len(w.tx),count)
+                w.rx=b'#TGP:READY:'+sender.nonce+b'\n'; sender.poll()
+                self.assertEqual(len(w.tx),count)
+                now[0]=0.12; sender.send(report)
+                self.assertEqual(w.tx[-1],packet(1,2,report,version))
+                # Focus loss supplies the same neutral report in every mode.
+                sender.send(NEUTRAL_REPORT)
+                self.assertEqual(w.tx[-1],packet(1,3,NEUTRAL_REPORT,version))
+                now[0]=1.0; w.rx=b'#TGP:ALIVE:'+sender.nonce+b'\n'; sender.poll()
+                now[0]=1.3; sender.poll(); self.assertTrue(sender.ready)
+                old=sender.nonce; now[0]=2.21; sender.poll()
+                self.assertFalse(sender.ready); self.assertNotEqual(sender.nonce,old)
+                w.rx=b'#TGP:READY:'+old+b'\n'; sender.poll(); self.assertFalse(sender.ready)
+                w.rx=b'#TGP:READY:'+sender.nonce+b'\n'; sender.poll()
+                w.rx=b'#TGP:BYE:'+sender.nonce+b'\n'; sender.close(timeout=0.001)
+                self.assertEqual(w.tx[-2:], [packet(1,1,NEUTRAL_REPORT,version),
+                                            b'#TGP:END:'+sender.nonce+b'\n'])
+                count=len(w.tx); sender.poll(); sender.send(report); sender.close()
+                self.assertFalse(sender.ready); self.assertEqual(len(w.tx),count)
+
     def test_uf2_storage_rejected(self):
         def block(address,family,flags=0x2000,number=0,total=1):
             b=bytearray(512)

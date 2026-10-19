@@ -41,25 +41,32 @@ bool Manager::finish_discovery(uint32_t now) {
     if(!discovery_ || !started_ || done_ || now-discovery_at_<duration_) return false;
     done_=true; return true;
 }
-bool Manager::observe(const Candidate &incoming,bool complete_name) {
+const Candidate *Manager::observe(const Candidate &incoming,bool complete_name) {
     size_t slot=count_;
     for(size_t i=0;i<count_;++i) if(found_[i].peer==incoming.peer) {slot=i; break;}
     if(slot==count_) {
-        if(count_==Capacity) return incoming.hid;
+        if(count_==Capacity) return nullptr;
         found_[count_++]={};
     }
     auto &item=found_[slot];
-    item.peer=incoming.peer; item.seen_at=incoming.seen_at; item.hid|=incoming.hid; item.rssi=incoming.rssi;
+    item.peer=incoming.peer; item.seen_at=incoming.seen_at; item.rssi=incoming.rssi;
+    // An Android peer can change profile while keeping its address. A fresh
+    // service advertisement replaces the profile; name-only responses merge.
+    if(incoming.hid || incoming.tgp) {
+        item.hid=incoming.hid; item.tgp=incoming.tgp;
+        item.controller_id=0; item.tgp_version=0;
+    }
+    if(incoming.controller_id) {item.controller_id=incoming.controller_id; item.tgp_version=incoming.tgp_version;}
     if(incoming.name[0] && (complete_name || !item.name[0])) {
         std::memcpy(item.name,incoming.name,sizeof(item.name)); item.name[sizeof(item.name)-1]=0;
     }
-    return item.hid;
+    return &item;
 }
-bool Manager::accepts(const Peer &peer,bool hid,uint32_t now) const {
+bool Manager::accepts(const Peer &peer,bool compatible,uint32_t now) const {
     if(!config_.enabled || discovery_) return false;
     if(one_shot_) return peer==requested_;
     const auto &policy=config_.policy;
-    if(policy.mode==Mode::AutoCompatible) return hid;
+    if(policy.mode==Mode::AutoCompatible) return compatible;
     int match=policy.find(peer); if(match<0) return false;
     // Give the preferred peer two seconds before accepting another allowed peer.
     return policy.preferred>=policy.count || match==policy.preferred || now-scan_at_>=2000;

@@ -11,7 +11,7 @@ bool tracing=false,discovering=false,ready=false,remote_close=false;
 uint16_t cid=0;
 uint8_t service_index=0,report_id=0;
 uint8_t descriptor_storage[1024];
-gamepad::Receiver receiver;
+gamepad::Receiver *receiver=nullptr;
 uint32_t now() {return to_ms_since_boot(get_absolute_time());}
 void trace_bytes(const uint8_t *data,size_t bytes) {
     for(size_t i=0;i<bytes;++i) std::printf("%s%02X",i?" ":"",data[i]);
@@ -87,7 +87,7 @@ void hid_event(uint8_t packet_type,uint16_t,uint8_t *packet,uint16_t size) {
             if(status || !select_layout(gattservice_subevent_hid_service_connected_get_num_instances(packet))) {
                 notify(Event::Failed,status?status:ERROR_CODE_UNSUPPORTED_FEATURE_OR_PARAMETER_VALUE); return;
             }
-            discovering=false; ready=true; receiver.release();
+            discovering=false; ready=true; receiver->release();
             notify(Event::Ready,report_id);
             // Fetch held state even from physical controllers that only notify changes.
             hids_host_send_get_report(cid,report_id,HID_REPORT_TYPE_INPUT);
@@ -95,21 +95,21 @@ void hid_event(uint8_t packet_type,uint16_t,uint8_t *packet,uint16_t size) {
         }
         case GATTSERVICE_SUBEVENT_HID_REPORT: {
             if(!ready || size<7 || packet[5]!=service_index || packet[6]!=report_id) return;
-            if(size<9) {receiver.receive(nullptr,0); return;}
+            if(size<9) {receiver->receive(nullptr,0); return;}
             uint16_t bytes=gattservice_subevent_hid_report_get_report_len(packet);
             const uint8_t *report=gattservice_subevent_hid_report_get_report(packet);
             // BTstack prepends the Report ID, although GATT notifications do not.
             if(bytes!=gamepad::ReportBytes+1 || size<9+bytes || report[0]!=report_id) {
-                receiver.receive(nullptr,0); return;
+                receiver->receive(nullptr,0); return;
             }
             if(remote_close) return;
             if(gamepad::disconnect_report(report+1,bytes-1)) {
-                receiver.release(); remote_close=true;
+                receiver->release(); remote_close=true;
                 notify(Event::RemoteClose,0);
                 return;
             }
-            if(receiver.receive(report+1,bytes-1,now())) {
-                if(receiver.contributing() && (receiver.nes() || receiver.home)) notify(Event::Activity,0);
+            if(receiver->receive(report+1,bytes-1,now())) {
+                if(receiver->contributing() && (receiver->nes() || receiver->home)) notify(Event::Activity,0);
             }
             break;
         }
@@ -120,16 +120,15 @@ void hid_event(uint8_t packet_type,uint16_t,uint8_t *packet,uint16_t size) {
     }
 }
 }
-void init(Notify callback) {
-    notify=callback; hids_host_init(descriptor_storage,sizeof(descriptor_storage));
+void init(gamepad::Receiver &input,Notify callback) {
+    receiver=&input; notify=callback; hids_host_init(descriptor_storage,sizeof(descriptor_storage));
 }
 uint8_t connect(uint16_t handle) {
     reset(); discovering=true;
     return hids_host_connect(handle,hid_event,HID_PROTOCOL_MODE_REPORT,&cid);
 }
-void reset() {receiver.release(); cid=0; discovering=ready=remote_close=false;}
+void reset() {if(receiver) receiver->release(); cid=0; discovering=ready=remote_close=false;}
 void trace(bool enabled) {tracing=enabled;}
 uint8_t service() {return service_index;}
 uint8_t report() {return report_id;}
-gamepad::Receiver &input() {return receiver;}
 }

@@ -84,8 +84,8 @@ void Hub::local(uint8_t keys) {
 }
 uint8_t Hub::nes(bool swap_ab) const {
     uint8_t keys=remote_keys()|
-        ((local_keys&LocalA)?gamepad::A:0)|((local_keys&LocalB)?gamepad::B:0)|
-        ((local_keys&LocalC)?gamepad::Start:0)|((local_keys&LocalUp)?gamepad::Up:0)|
+        ((local_keys&LocalA)?gamepad::Left:0)|((local_keys&LocalB)?gamepad::A:0)|
+        ((local_keys&LocalC)?gamepad::Right:0)|((local_keys&LocalUp)?gamepad::Up:0)|
         ((local_keys&LocalDown)?gamepad::Down:0);
     return swap_ab?uint8_t((keys&~3)|((keys&1)<<1)|((keys&2)>>1)):keys;
 }

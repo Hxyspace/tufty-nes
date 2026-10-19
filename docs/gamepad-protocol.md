@@ -1,10 +1,10 @@
 # Tufty NES 手柄协议
 
-CDC1 串口和 BLE 共用十字节按键 Report，解码后保留全部按键、双摇杆和扳机压力。两条连接独立维护状态，同时只有一个活跃远程来源；另一来源不能抢占。活跃来源失效后切换到备用来源，等待其中立后接受输入。本机 GPIO 始终可用，合并后应用 `swapab`。USB 磁盘模式不处理手柄输入。日常操作见 [使用指南](usage.md)。
+TGP v1/v2 使用八字节状态，支持串口和 BLE；v3 使用十字节按键 Report，与 BLE HID 共用解码，保留全部按键、双摇杆和扳机压力。各协议统一转换为逻辑手柄状态。两条连接独立维护状态，同时只有一个活跃远程来源；另一来源不能抢占。活跃来源失效后切换到备用来源，等待其中立后接受输入。本机 GPIO 始终可用，合并后应用 `swapab`。USB 磁盘模式不处理手柄输入。日常操作见 [使用指南](usage.md)。
 
 ## USB 串口
 
-CDC0（Console）用于设置，CDC1（Gamepad）用于手柄。CDC1 使用 115200 波特率，打开时启用 DTR，USB VID/PID 为 `CAFE:4025`。串口仅支持 **TGP v3**，固件和 Python 发送器需一起更新。
+CDC0（Console）用于设置，CDC1（Gamepad）用于手柄。CDC1 使用 115200 波特率，打开时启用 DTR，USB VID/PID 为 `CAFE:4025`。Python 发送器默认使用 **TGP v3**，也可用 `--v1`／`--v2` 切换协议。
 
 ### 会话
 
@@ -40,7 +40,34 @@ Tufty -> PC: #TGP:BYE:0123456789abcdef
 
 同一会话连续相同 sequence 的帧被拒绝；心跳和关闭 Report 也必须增加 sequence。不支持的版本、错误 ID、错误长度或非十六进制数据不更新有效帧计时。状态帧不携带 nonce，必须在握手后发送。
 
-上例三帧的 sequence 分别为 0、1、2，依次表示中立、右+A、主动关闭。旧版 v1/v2、无版本握手、MENU 和 END 命令已移除。PC 的 Esc 直接发送 Home 按下/松开状态，Ctrl+C 发送中立状态和关闭 Report 后退出。
+上例三帧的 sequence 分别为 0、1、2，依次表示中立、右+A、主动关闭。v3 会话不接受八字节状态、MENU 或 END 命令。PC 的 Esc 直接发送 Home 按下/松开状态，Ctrl+C 发送中立状态和关闭 Report 后退出。
+
+## TGP v1/v2
+
+状态报文为八字节：`54 47 50 version id_lo id_hi sequence buttons`。版本为 `01` 或 `02`，ID 为 1–65535，须与 `padid` 相同。两个版本统一按完整八位解析，早期 v1 发送器仅使用低五位，位序如下：
+
+| bit | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+|---|---|---|---|---|---|---|---|---|
+| 按键 | 上 | 下 | 左 | 右 | A / ACTION | B | Select | Start |
+
+例如 `54 47 50 02 01 00 00 18` 表示 ID 1、sequence 0、右+A；`54 47 50 02 01 00 01 E0` 表示 B+Select+Start。此位序与 v3 的十字节 payload 不同，也不直接等于 NES 的按键位序。
+
+**串口：**状态包装为 `#TGP:<16 个十六进制字符>\n`；HELLO 和 READY 不带版本后缀：
+
+```text
+PC -> Tufty: #TGP:HELLO:0001:0123456789abcdef
+Tufty -> PC: #TGP:READY:0123456789abcdef
+PC -> Tufty: #TGP:5447500201000000
+PC -> Tufty: #TGP:5447500201000118
+PC -> Tufty: #TGP:END:0123456789abcdef
+Tufty -> PC: #TGP:BYE:0123456789abcdef
+```
+
+无版本握手建立的会话可接收 v1/v2，不能混入 v3；同一 nonce 也不能切换会话格式。READY 后先发中立状态。重复 HELLO 不延长按键或会话时限；350 ms 释放输入、500 ms ALIVE、1200 ms 结束会话，与 v3 一致。
+
+**BLE：**服务 UUID 为 `c53a1000-6e5d-4a89-8f3c-9e5a7264f101`，Read+Notify 状态特征为 `c53a1001-6e5d-4a89-8f3c-9e5a7264f101`。自动连接同时检查服务及制造商身份：company `FFFF`，内容 `54 47 50 version id_lo id_hi`。白名单选择仍须匹配 TGP ID。连接后发现特征、写 CCCD `01 00` 并订阅通知，八字节状态不带串口封装，不要求配对。
+
+输入变化立即发送，空闲每 120 ms 发完整状态；重复 sequence、错误 ID、非法版本或长度均不刷新计时。BLE 订阅就绪后等待首帧，随后从最后一帧有效状态计时：350 ms 无有效状态便释放该来源输入、取消通知订阅并断开连接，断开完成后重新扫描，不进入服务失败的 30 秒暂避。该超时只适用于 TGP BLE；下文的 HID 不要求心跳。v1/v2 没有 Home 或主动断链 Report，返回菜单使用 Tufty 的 Home；发送端关闭时可先发中立状态，再结束连接或停止心跳。
 
 ## BLE HID
 
@@ -48,7 +75,7 @@ Tufty 作为 Central，默认扫描 HID 服务 `0x1812` 并自动连接。当前
 
 读取 Report Map（`0x2A4B`），通过 Report Reference（`0x2908`）区分报告，并订阅 Input Report（`0x2A4D`）的 CCCD。游戏使用 **Report ID 4、10 字节 payload**，GATT 通知不带 ID 前缀；Consumer Report ID 3 不映射为 NES 输入。固件检查描述符布局后才读取。
 
-Read 返回当前完整状态，输入变化时通知。BLE 无需心跳，不因通知静默释放输入或重连；实际断连时释放该路输入并重新扫描。实体手柄使用 LE Legacy Just Works 配对，配对信息仅存 RAM。
+Read 返回当前完整状态，输入变化时通知。HID 无需心跳，不因通知静默释放输入或重连；实际断连时释放该路输入并重新扫描。实体手柄使用 LE Legacy Just Works 配对，配对信息仅存 RAM。
 
 ## 共用 Report
 
@@ -89,4 +116,4 @@ NES 使用方向、A/B、Select/Start。左摇杆带回中死区，可代替十�
 - 串口结束 TGP 会话并回复 `BYE:<nonce>`，USB 端口仍然存在。脚本主动退出时不会因 BYE 再次握手，最多等 250 ms 后关闭端口。
 - BLE 主动断开当前手柄并继续扫描，无需关闭手机系统蓝牙。
 
-安卓先停止普通输入通知和广播，发送关闭消息后保留 GATT Server，等待断开回调再清理，可设置约 2 秒的清理超时。重新开启时恢复中立状态及广播，无需关闭手机系统蓝牙。完整 Report Map 及安卓发送端实现细节见安卓手柄项目的 `docs/hid-protocol.md`。
+BLE 发送端先停止普通输入通知和广播，发送关闭消息后保留 GATT Server，等待断开回调再清理，可设置约 2 秒的清理超时。重新开启时恢复中立状态及广播。

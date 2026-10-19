@@ -11,6 +11,7 @@ struct Settings {
 };
 Settings settings();
 void init();
+void set_controller_id(uint16_t id);
 void set_enabled(input::Source source,bool enabled);
 bool whitelist_add(const bluetooth::Peer &peer,bool preferred=false);
 bool whitelist_remove(const bluetooth::Peer &peer);

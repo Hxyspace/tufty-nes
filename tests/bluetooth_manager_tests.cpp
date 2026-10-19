@@ -12,11 +12,20 @@ int main() {
     assert(manager.observe(a,true));
     auto response=a; response.hid=false; response.rssi=-50; response.seen_at=200;
     std::strcpy(response.name,"XT");
-    assert(manager.observe(response,false)); // Scan response preserves HID and full name.
+    assert(manager.observe(response,false)->hid); // Scan response preserves HID and full name.
     manager.observe(b,false);
     assert(manager.candidates(list,16)==2); // Same MAC, different address type.
     assert(list[0].hid && list[0].rssi==-50 && list[0].seen_at==200);
     assert(!std::strcmp(list[0].name,"XTARK"));
+    // Switching an Android peer between HID and TGP must replace cached profile
+    // metadata; a name-only scan response must preserve the new profile.
+    auto custom=a; custom.hid=false; custom.tgp=true; custom.controller_id=1; custom.tgp_version=2;
+    const auto *cached=manager.observe(custom,true);
+    assert(cached->tgp && !cached->hid && cached->controller_id==1);
+    response.tgp=false; response.controller_id=0; response.tgp_version=0;
+    cached=manager.observe(response,false);
+    assert(cached->tgp && cached->controller_id==1);
+    cached=manager.observe(a,true); assert(cached->hid && !cached->tgp && !cached->controller_id);
     for(unsigned i=2;i<30;++i) {b.peer.address[0]=i; manager.observe(b,false);}
     assert(manager.candidates(list,16)==16 && !manager.candidates(nullptr,16));
 

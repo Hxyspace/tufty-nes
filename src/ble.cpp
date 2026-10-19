@@ -2,6 +2,8 @@
 #include "gamepad.hpp"
 #include "bluetooth_manager.hpp"
 #include "ble_gamepad.hpp"
+#include "ble_tgp.hpp"
+#include "tgp_legacy.hpp"
 #include "power.hpp"
 #include "usb.hpp"
 #include "pico/cyw43_arch.h"
@@ -16,9 +18,10 @@ namespace {
 State state=State::Off;
 bool initialized=false,working=false;
 bool tracing=false;
-bool remote_close=false;
+bool remote_close=false,profile_failure_pending=false;
 bluetooth::Manager manager;
-gamepad::Receiver &receiver=ble_gamepad::input();
+gamepad::Receiver receiver;
+bool tgp_profile=false;
 uint8_t last_error=0;
 uint32_t state_at=0,max_poll_gap=0,last_poll=0,max_poll_work=0,restarts=0;
 uint32_t scan_reports=0,scan_candidates=0;
@@ -43,8 +46,9 @@ const char *name() {
 }
 void phase(State value) {
     state=value; state_at=now();
+    profile_failure_pending=false;
     if(value!=State::Ready) remote_close=false;
-    if(value!=State::Ready && value!=State::Discovering) ble_gamepad::reset();
+    if(value!=State::Ready && value!=State::Discovering) {ble_gamepad::reset(); ble_tgp::reset();}
 }
 void scan() {
     receiver.release();
@@ -81,21 +85,34 @@ void reject(uint8_t reason) {
     if(state!=State::Discovering && state!=State::Ready) return;
     receiver.release(); last_error=reason;
     std::memcpy(skipped_peer,peer,sizeof(peer)); skipped_type=peer_type; skipped_at=now();
-    std::printf("BLE: HID FAILED status=0x%02x\n",reason);
+    std::printf("BLE: %s FAILED status=0x%02x\n",tgp_profile?"TGP":"HID",reason);
     if(handle!=HCI_CON_HANDLE_INVALID) disconnect();
     else retry();
 }
-void profile_event(ble_gamepad::Event event,uint8_t value) {
+void profile_event(ble_profile::Event event,uint8_t value) {
     switch(event) {
-        case ble_gamepad::Event::Ready:
+        case ble_profile::Event::Ready:
             if(state!=State::Discovering) return;
             phase(State::Ready); last_error=0;
-            std::printf("BLE: READY peer=%s report=%u\n",bd_addr_to_str(peer),value);
+            if(tgp_profile) std::printf("BLE: READY peer=%s protocol=TGP\n",bd_addr_to_str(peer));
+            else std::printf("BLE: READY peer=%s report=%u\n",bd_addr_to_str(peer),value);
             break;
-        case ble_gamepad::Event::Failed: reject(value); break;
-        case ble_gamepad::Event::RemoteClose:
+        case ble_profile::Event::Failed:
+            if(state!=State::Discovering && state!=State::Ready) return;
+            // HIDS maps GATT errors, including a lost link, to 0x1f. Finish
+            // dispatching HCI first: disconnection clears this pending failure
+            // and retries without the 30-second profile failure cooldown.
+            if(value==ERROR_CODE_UNSPECIFIED_ERROR) {receiver.release(); profile_failure_pending=true;}
+            else reject(value);
+            break;
+        case ble_profile::Event::RemoteClose:
             remote_close=true; std::printf("BLE: REMOTE CLOSE; disconnecting gamepad\n"); break;
-        case ble_gamepad::Event::Activity: power::activity(); break;
+        case ble_profile::Event::HeartbeatTimeout:
+            if(!tgp_profile || state!=State::Ready) return;
+            last_error=ERROR_CODE_CONNECTION_TIMEOUT;
+            std::printf("BLE: TGP HEARTBEAT TIMEOUT; disconnecting and rescanning\n");
+            disconnect(); break;
+        case ble_profile::Event::Activity: power::activity(); break;
     }
 }
 void event(uint8_t packet_type,uint16_t,uint8_t *packet,uint16_t size) {
@@ -106,7 +123,7 @@ void event(uint8_t packet_type,uint16_t,uint8_t *packet,uint16_t size) {
             working=btstack_event_state_get_state(packet)==HCI_STATE_WORKING;
             if(!working) receiver.release();
             if(btstack_event_state_get_state(packet)==HCI_STATE_OFF) {
-                handle=HCI_CON_HANDLE_INVALID; ble_gamepad::reset();
+                handle=HCI_CON_HANDLE_INVALID; ble_gamepad::reset(); ble_tgp::reset();
             }
             if(working && manager.configuration().enabled && state==State::Starting) scan();
             break;
@@ -124,19 +141,29 @@ void event(uint8_t packet_type,uint16_t,uint8_t *packet,uint16_t size) {
             bluetooth::Peer key; std::memcpy(key.address,address,6); key.random=type==BD_ADDR_TYPE_LE_RANDOM;
             Candidate item; item.peer=key; item.seen_at=now();
             item.hid=ad_data_contains_uuid16(bytes,data,manager.configuration().scan_uuid);
+            item.tgp=ad_data_contains_uuid128(bytes,data,tgp_legacy::ServiceUuid);
             item.rssi=gap_event_advertising_report_get_rssi(packet);
             bool complete_name=false;
             ad_context_t context;
             for(ad_iterator_init(&context,bytes,data);ad_iterator_has_more(&context);ad_iterator_next(&context)) {
                 uint8_t ad_type=ad_iterator_get_data_type(&context);
+                if(ad_type==BLUETOOTH_DATA_TYPE_MANUFACTURER_SPECIFIC_DATA) {
+                    tgp_legacy::identity(ad_iterator_get_data(&context),ad_iterator_get_data_len(&context),item.controller_id,item.tgp_version);
+                }
                 if(ad_type!=BLUETOOTH_DATA_TYPE_COMPLETE_LOCAL_NAME && ad_type!=BLUETOOTH_DATA_TYPE_SHORTENED_LOCAL_NAME) continue;
                 if(ad_type==BLUETOOTH_DATA_TYPE_SHORTENED_LOCAL_NAME && item.name[0]) continue;
                 size_t n=std::min<size_t>(ad_iterator_get_data_len(&context),sizeof(item.name)-1);
                 std::memcpy(item.name,ad_iterator_get_data(&context),n); item.name[n]=0;
                 complete_name=ad_type==BLUETOOTH_DATA_TYPE_COMPLETE_LOCAL_NAME;
             }
-            bool hid=manager.observe(item,complete_name);
-            if(!manager.accepts(key,hid,now())) return;
+            const auto *cached=manager.observe(item,complete_name);
+            if(cached) item=*cached;
+            bool tgp=item.tgp && item.controller_id==manager.configuration().controller_id && tgp_legacy::supported(item.tgp_version);
+            // A known TGP profile always uses ID filtering, including explicit
+            // selections/whitelists. HID controllers have no TGP identity.
+            if(item.tgp && !tgp && !item.hid) return;
+            if(!manager.accepts(key,item.hid || tgp,now())) return;
+            tgp_profile=tgp && !item.hid;
             if(type==skipped_type && !std::memcmp(address,skipped_peer,6) && now()-skipped_at<30000) return;
             ++scan_candidates;
             gap_stop_scan(); std::memcpy(peer,address,6); peer_type=type;
@@ -169,8 +196,8 @@ void event(uint8_t packet_type,uint16_t,uint8_t *packet,uint16_t size) {
             if(state==State::Recovering) {gap_disconnect(handle); return;}
             if(state!=State::Connecting || !manager.configuration().enabled) {disconnect(); return;}
             phase(State::Discovering);
-            status=ble_gamepad::connect(handle);
-            if(status) reject(status);
+            if(tgp_profile) ble_tgp::connect(handle,manager.configuration().controller_id);
+            else {status=ble_gamepad::connect(handle); if(status) reject(status);}
             break;
         }
         case HCI_EVENT_DISCONNECTION_COMPLETE:
@@ -203,9 +230,14 @@ void report() {
         static_cast<unsigned long>(max_poll_gap),static_cast<unsigned long>(max_poll_work),
         static_cast<unsigned long>(restarts),manager.configuration().policy.mode==bluetooth::Mode::WhitelistOnly?"whitelist":"auto",
         manager.configuration().policy.count);
-    std::printf("BLE PEER: address=%s type=%s service=%u report=%u scan_uuid=0x%04X trace=%u\n",
-        handle==HCI_CON_HANDLE_INVALID?"none":bd_addr_to_str(peer),
-        peer_type==BD_ADDR_TYPE_LE_RANDOM?"random":"public",ble_gamepad::service(),ble_gamepad::report(),manager.configuration().scan_uuid,tracing);
+    if(tgp_profile && handle!=HCI_CON_HANDLE_INVALID) {
+        std::printf("BLE PEER: address=%s type=%s protocol=TGP id=%u version=%u\n",bd_addr_to_str(peer),
+            peer_type==BD_ADDR_TYPE_LE_RANDOM?"random":"public",manager.configuration().controller_id,ble_tgp::version());
+    } else {
+        std::printf("BLE PEER: address=%s type=%s service=%u report=%u scan_uuid=0x%04X trace=%u\n",
+            handle==HCI_CON_HANDLE_INVALID?"none":bd_addr_to_str(peer),
+            peer_type==BD_ADDR_TYPE_LE_RANDOM?"random":"public",ble_gamepad::service(),ble_gamepad::report(),manager.configuration().scan_uuid,tracing);
+    }
     std::printf("BLE SCAN: reports=%lu candidates=%lu\n",static_cast<unsigned long>(scan_reports),
         static_cast<unsigned long>(scan_candidates));
 }
@@ -243,7 +275,8 @@ void init() {
     // receiver's legacy Just Works pairing, without requiring bonding or MITM.
     sm_set_secure_connections_only_mode(false);
     sm_set_authentication_requirements(0); // Temporary pairing, without bonding.
-    ble_gamepad::init(profile_event);
+    ble_gamepad::init(receiver,profile_event);
+    ble_tgp::init(receiver,profile_event);
     hci_registration.callback=event; hci_add_event_handler(&hci_registration);
     sm_registration.callback=event; sm_add_event_handler(&sm_registration);
     gap_set_connection_parameters(48,48,6,12,0,100,0,0);
@@ -268,6 +301,11 @@ void poll() {
     if(at-last_poll>max_poll_gap) max_poll_gap=at-last_poll;
     last_poll=at;
     cyw43_arch_poll();
+    if(profile_failure_pending) {
+        profile_failure_pending=false;
+        reject(ERROR_CODE_UNSPECIFIED_ERROR);
+    }
+    if(tgp_profile && (state==State::Discovering || state==State::Ready)) ble_tgp::poll(now());
     if(manager.finish_discovery(now())) {
         if(state==State::Scanning) {gap_stop_scan(); phase(State::Waiting);}
         std::printf("BLE: DISCOVERY COMPLETE devices=%u\n",unsigned(manager.count()));

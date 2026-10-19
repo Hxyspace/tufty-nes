@@ -161,7 +161,7 @@ static void command(const char *s) {
         if(std::sscanf(s,"brightness %u %c",&value,&tail)==1 && value>=1 && value<=100) {
             storage::config.brightness=value; display::brightness(value); dirty=storage::state_ready();
         } else if(std::sscanf(s,"padid %u %c",&value,&tail)==1 && value>=1 && value<=65535) {
-            pad.reset(true); pad.id=storage::config.controller=value; dirty=storage::state_ready(); pad.announce();
+            controllers::set_controller_id(uint16_t(value));
         } else if(std::sscanf(s,"swapab %u %c",&value,&tail)==1 && value<=1) {
             storage::config.swap_ab=value; dirty=storage::state_ready();
         } else std::printf("Unknown command; type help\n");

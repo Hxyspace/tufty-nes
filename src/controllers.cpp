@@ -10,7 +10,7 @@ namespace {
 void dirty() {usb::dirty=storage::state_ready();}
 void apply_bluetooth(bool reconnect=true) {
     const auto &cfg=storage::config;
-    ble::configure({cfg.ble_enabled,cfg.ble_scan_uuid,cfg.ble},reconnect);
+    ble::configure({cfg.ble_enabled,cfg.ble_scan_uuid,cfg.ble,cfg.controller},reconnect);
 }
 bool parse_peer(const char *text,bluetooth::Peer &key) {
     char mac[18],type[7],tail;
@@ -33,6 +33,12 @@ void init() {
     input::hub.enable(input::Source::Ble,storage::config.ble_enabled);
     if(storage::config.serial_enabled) usb::pad.announce();
     apply_bluetooth(false);
+}
+void set_controller_id(uint16_t id) {
+    if(!id || storage::config.controller==id) return;
+    storage::config.controller=id; usb::pad.reset(true); usb::pad.id=id;
+    if(storage::config.serial_enabled) usb::pad.announce();
+    apply_bluetooth(); dirty();
 }
 void set_enabled(input::Source source,bool enabled) {
     if(source==input::Source::Serial) {
@@ -103,8 +109,8 @@ bool command(const char *line) {
         ble::Candidate devices[16]; size_t count=ble::candidates(devices,16);
         for(size_t i=0;i<count;++i) {
             char mac[18]; devices[i].peer.text(mac);
-            std::printf("BLE DEVICE: %s %s RSSI=%d HID=%u name=%s\n",mac,
-                devices[i].peer.random?"random":"public",devices[i].rssi,devices[i].hid,devices[i].name);
+            std::printf("BLE DEVICE: %s %s RSSI=%d HID=%u TGP=%u id=%u name=%s\n",mac,
+                devices[i].peer.random?"random":"public",devices[i].rssi,devices[i].hid,devices[i].tgp_version,devices[i].controller_id,devices[i].name);
         }
         std::printf("BLE: DEVICES=%u\n",unsigned(count));
     } else if(!std::strcmp(line,"ble whitelist")) {

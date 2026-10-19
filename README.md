@@ -7,7 +7,8 @@
 - 从 `/system/roms/` 加载 iNES 1.0 和兼容的 NES 2.0 游戏，无需将 ROM 编译进固件。
 - 卡片式游戏菜单，支持自定义封面和背景。
 - 双 USB 串口：CDC0 用于 Console，CDC1 用于手柄。
-- Windows 键盘发送器，使用 TGP v3，与 BLE 共用按键 Report 和 Home 操作。
+- Windows 键盘发送器，默认 TGP v3，与 BLE HID 共用按键 Report 和 Home 操作，也支持 `--v1` / `--v2`。
+- TGP v1/v2 支持串口与 BLE，统一八键解析；BLE 心跳超时后自动断开重连。
 - BLE HID：适配 XTARK 实体手柄，支持左摇杆方向、L3+R3 长按返回菜单、自动重连及安卓主动关闭手柄。
 - USB MSC 磁盘模式，可直接复制和管理游戏文件。
 - 保存屏幕亮度、手柄 ID、按键映射和上次选择的游戏。
@@ -61,9 +62,9 @@ sudo apt install git python3 cmake ninja-build build-essential \
 |---|---|---|
 | 菜单上一项 / 下一项 | A 或 Up / C 或 Down | 方向键或 WASD |
 | 启动游戏 | B | Z 或 Space |
-| NES A / B | A / B | Z 或 Space / X |
-| Start / Select | C / 由手柄提供 | Enter / 右 Shift |
-| 游戏方向 | Up、Down；左右由手柄提供 | 方向键或 WASD |
+| NES A / B | B / 由手柄提供 | Z 或 Space / X |
+| Start / Select | 由手柄提供 | Enter / 右 Shift |
+| 游戏方向（上 / 下 / 左 / 右） | Up / Down / A / C | 方向键或 WASD |
 | 返回菜单 | Home | Esc |
 | 深度休眠 | 长按 Reset 至 LED 动画结束 | — |
 | 唤醒 | A / B / C / Up / Down | — |
@@ -82,6 +83,8 @@ python tools/serial_gamepad.py
 开启 XTARK BLE 手柄或安卓手柄应用的 NES / XTARK HID 模式后，Tufty 默认自动连接。十字键或左摇杆控制方向，A/B、Select/Start 控制游戏；左右摇杆回中并同时按下（L3+R3）1.5 秒返回菜单，安卓也可直接使用 Home。详见 [BLE 手柄](docs/usage.md#ble-手柄)。
 
 串口与 BLE 同时连接时，只使用一个活跃远程手柄，本机按键始终可用。可通过 Console 分别关闭串口或 BLE，扫描设备并保存白名单，设置保存在 `/state`。详见 [连接设置](docs/usage.md#连接设置)。
+
+支持 TGP v1/v2 八字节手柄协议，串口使用 CDC1，BLE 自动识别服务；两端手柄 ID 保持一致。详见 [TGP 模式](docs/usage.md#tgp-v1v2-模式)。
 
 ## 文档
 

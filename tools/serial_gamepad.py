@@ -22,19 +22,29 @@ def make_report(buttons=0, home=False):
          (-1,1):5,(-1,0):6,(-1,-1):7,(0,0):255}[x,y]
     return bytes((128,128,128,128,hat,buttons&3,(buttons&12)|(16 if home else 0),0,0,0))
 
-def packet(controller_id, sequence, report):
+def packet(controller_id, sequence, report, version=3):
     if not isinstance(controller_id,int) or not 1 <= controller_id <= 65535:
         raise ValueError('controller ID must be from 1 to 65535')
     if not isinstance(report,(bytes,bytearray)) or len(report)!=10:
         raise ValueError('report must contain exactly ten bytes')
-    data=b'TGP'+bytes((3,controller_id&255,controller_id>>8,sequence&255))+report
+    if version not in (1,2,3):
+        raise ValueError('protocol version must be 1, 2 or 3')
+    if version!=3:
+        # v1/v2 share the eight-button layout; only the version byte differs.
+        directions=(1,9,8,10,2,6,4,5)
+        hat=report[4]&15
+        buttons=(directions[hat] if hat<8 else 0) | ((report[5]&3)<<4) | ((report[6]&12)<<4)
+        report=bytes((buttons,))
+    data=b'TGP'+bytes((version,controller_id&255,controller_id>>8,sequence&255))+report
     return b'#TGP:'+data.hex().encode()+b'\n'
 
 class Sender:
-    def __init__(self, connection, controller_id=1, clock=time.monotonic):
+    def __init__(self, connection, controller_id=1, clock=time.monotonic, version=3):
         self.connection=connection
         self.controller_id=controller_id
         self.clock=clock
+        self.version=version
+        self.suffix=b':3' if version==3 else b''
         self.ready=self.closed=False
         self.line=bytearray()
         self.overflow=False
@@ -42,7 +52,7 @@ class Sender:
         self.report=None
         self.last_sent=self.last_alive=clock()
         self.nonce=b''
-        packet(controller_id,0,NEUTRAL_REPORT)
+        packet(controller_id,0,NEUTRAL_REPORT,version)
         self.begin()
 
     def write(self, data):
@@ -55,7 +65,7 @@ class Sender:
         self.sequence=0
         self.report=None
         self.last_hello=self.clock()
-        self.write(b'#TGP:HELLO:'+f'{self.controller_id:04x}'.encode()+b':'+self.nonce+b':3\n')
+        self.write(b'#TGP:HELLO:'+f'{self.controller_id:04x}'.encode()+b':'+self.nonce+self.suffix+b'\n')
 
     def poll(self):
         for value in self.connection.read(256):
@@ -67,7 +77,7 @@ class Sender:
                         self.begin()
                     elif not self.closed:
                         if line==b'#TGP:APP': self.begin()
-                        elif line==b'#TGP:READY:'+self.nonce+b':3':
+                        elif line==b'#TGP:READY:'+self.nonce+self.suffix:
                             starting=not self.ready
                             self.ready=True
                             self.last_alive=self.clock()
@@ -87,7 +97,7 @@ class Sender:
         if not self.ready or self.closed: return
         now=self.clock()
         if report!=self.report or now-self.last_sent>=0.12:
-            self.write(packet(self.controller_id,self.sequence,report))
+            self.write(packet(self.controller_id,self.sequence,report,self.version))
             self.sequence=(self.sequence+1)&255
             self.report=bytes(report)
             self.last_sent=now
@@ -97,9 +107,11 @@ class Sender:
         self.closed=True
         try:
             if self.ready:
-                for report in (NEUTRAL_REPORT,DISCONNECT_REPORT):
-                    self.write(packet(self.controller_id,self.sequence,report))
+                reports=(NEUTRAL_REPORT,DISCONNECT_REPORT) if self.version==3 else (NEUTRAL_REPORT,)
+                for report in reports:
+                    self.write(packet(self.controller_id,self.sequence,report,self.version))
                     self.sequence=(self.sequence+1)&255
+                if self.version!=3: self.write(b'#TGP:END:'+self.nonce+b'\n')
                 deadline=time.monotonic()+timeout
                 while self.ready and time.monotonic()<deadline:
                     self.poll()
@@ -176,10 +188,14 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--port',help='CDC1 COM port or /dev/ttyACM1')
     p.add_argument('--controller-id',type=int,default=1)
+    versions=p.add_mutually_exclusive_group()
+    versions.add_argument('--v1',dest='version',action='store_const',const=1,help='TGP v1 eight-button mode')
+    versions.add_argument('--v2',dest='version',action='store_const',const=2,help='TGP v2 eight-button mode')
+    p.set_defaults(version=3)
     p.add_argument('--buttons',type=lambda s:int(s,0),help='fixed bitmap for USB checks')
     p.add_argument('--seconds',type=float,help='stop after this many seconds')
     args=p.parse_args()
-    try: packet(args.controller_id,0,make_report(args.buttons or 0))
+    try: packet(args.controller_id,0,make_report(args.buttons or 0),args.version)
     except ValueError as e: p.error(str(e))
     if args.buttons is None and os.name!='nt': p.error('keyboard capture uses Windows; use --buttons on Linux')
     try: import serial
@@ -189,7 +205,8 @@ def main():
     connection=None
     sender=None
     started=time.monotonic()
-    print('Arrows/WASD: move; Z/Space: A; X: B; Enter: Start; Right Shift: Select; Esc: library; Ctrl+C: quit')
+    home='Esc: library' if args.version==3 else 'Home: use the Tufty button'
+    print(f'TGP v{args.version}; Arrows/WASD: move; Z/Space: A; X: B; Enter: Start; Right Shift: Select; {home}; Ctrl+C: quit')
     if capture: print('Keyboard active only in this terminal window; switching windows releases all buttons.')
     try:
         while args.seconds is None or time.monotonic()-started<args.seconds:
@@ -200,7 +217,7 @@ def main():
                         time.sleep(0.5)
                         continue
                     connection=serial.Serial(name,115200,timeout=0,write_timeout=0.25)
-                    sender=Sender(connection,args.controller_id)
+                    sender=Sender(connection,args.controller_id,version=args.version)
                     print(f'{name}: connected, waiting for READY')
                 was_ready=sender.ready
                 sender.poll()

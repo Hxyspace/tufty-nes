@@ -22,6 +22,7 @@ private:
     char line[80]{};
     size_t used = 0;
     bool overflow = false;
+    uint8_t mode = 0; // 2: versionless v1/v2 session; 3: negotiated XTARK payload.
     void process(uint32_t now);
     bool reply(const char *kind, const char *token, const char *suffix = "");
 };

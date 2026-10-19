@@ -1,6 +1,8 @@
 #include "protocol.hpp"
+#include "tgp_legacy.hpp"
 #include "ines.hpp"
 #include <cassert>
+#include <cstdio>
 #include <cstring>
 #include <string>
 #include <utility>
@@ -25,9 +27,9 @@ static void hello(tgp::Receiver &r,uint32_t now=0) {
 static void serial_tests() {
     tgp::Receiver r; r.send=send;
     line(r,frame(neutral,0),0); assert(!r.active && !r.input.nes());
-    // Only v3 handshakes with the configured nonzero ID are accepted.
+    // v3 handshake rejects incorrect IDs, unsupported suffixes and malformed nonces.
     for(const char *invalid:{"#TGP:HELLO:0002:0123456789abcdef:3\n",
-        "#TGP:HELLO:0001:0123456789abcdef\n","#TGP:HELLO:0001:0123456789abcdef:2\n",
+        "#TGP:HELLO:0001:0123456789abcdef:2\n",
         "#TGP:HELLO:0001:0123456789abcdeF:3\n","#TGP:HELLO:0001:0123456789abcdeg:3\n"}) {
         line(r,invalid,1); assert(!r.active);
     }
@@ -103,8 +105,48 @@ static void serial_tests() {
     r.poll(uint32_t(0xffffff00u+350)); assert(!r.input.home && r.active);
     r.poll(uint32_t(0xffffff00u+1200)); assert(!r.active);
 }
+static std::string legacy_frame(uint8_t keys,uint8_t seq,uint8_t version=2,uint16_t id=1) {
+    char out[32]; std::snprintf(out,sizeof(out),"#TGP:544750%02x%02x%02x%02x%02x\n",version,id&255,id>>8,seq,keys);
+    return out;
+}
+static void legacy_tests() {
+    gamepad::ControllerState state; uint8_t sequence;
+    for(unsigned bits=0;bits<256;++bits) {
+        uint8_t packet[]={'T','G','P',2,1,0,255,uint8_t(bits)};
+        assert(tgp_legacy::decode(packet,8,1,state,sequence) && sequence==255);
+        gamepad::Receiver receiver; receiver.update(state,0);
+        assert(receiver.nes()==((bits&15)<<4 | bits>>4)); // TGP directions followed by A/B/Select/Start.
+        packet[3]=1;
+        assert(tgp_legacy::decode(packet,8,1,state,sequence) && sequence==255);
+        receiver.update(state,1);
+        assert(receiver.nes()==((bits&15)<<4 | bits>>4)); // Both versions use all eight bits.
+        assert(!tgp_legacy::decode(packet,8,2,state,sequence));
+        assert(!tgp_legacy::decode(packet,7,1,state,sequence));
+    }
+    tgp::Receiver r; r.send=send; output.clear();
+    std::string handshake=std::string("#TGP:HELLO:0001:")+token+"\r\n";
+    line(r,legacy_frame(0x18,0),0); assert(!r.active);
+    line(r,handshake,10); assert(r.active && output=="#TGP:READY:0123456789abcdef\n");
+    line(r,legacy_frame(0x18,255,1),20); assert(r.input.nes()==(gamepad::Right|gamepad::A));
+    line(r,legacy_frame(0,255),30); assert(r.input.nes());
+    line(r,legacy_frame(0xe0,0),40); assert(r.input.nes()==(gamepad::B|gamepad::Select|gamepad::Start));
+    line(r,legacy_frame(0xe0,1,1),50);
+    assert(r.last_state==50 && r.input.nes()==(gamepad::B|gamepad::Select|gamepad::Start));
+    line(r,frame(neutral,2),60); assert(r.last_state==50); // Session formats cannot mix.
+    line(r,handshake,100); assert(r.last_state==50 && r.seen && r.sequence==1);
+    line(r,"#TGP:HELLO:0001:0123456789abcdef:3\n",110); assert(r.last_state==50);
+    line(r,"#TGP:END:fedcba9876543210\n",120); assert(r.active);
+    r.poll(399); assert(r.input.nes()); r.poll(400); assert(!r.input.nes() && r.active);
+    r.poll(510); assert(output.find("#TGP:ALIVE:0123456789abcdef\n")!=std::string::npos);
+    line(r,legacy_frame(0,2),520); assert(r.input.valid);
+    line(r,std::string("#TGP:END:")+token+"\n",530);
+    assert(!r.active && !r.input.valid && output.find("#TGP:BYE:0123456789abcdef\n")!=std::string::npos);
+    line(r,handshake,600); line(r,legacy_frame(0,2),610); r.poll(1810); assert(!r.active);
+    hello(r,1900); line(r,frame(neutral,0),1910); assert(r.input.valid);
+    line(r,legacy_frame(0x18,1),1920); assert(!r.input.nes());
+}
 int main() {
-    serial_tests();
+    serial_tests(); legacy_tests();
     std::vector<uint8_t> rom(16+16384+8192); std::memcpy(rom.data(),"NES\x1a",4);
     rom[4]=1; rom[5]=1;
     ines::Image image;

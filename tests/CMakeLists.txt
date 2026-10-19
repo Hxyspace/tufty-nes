@@ -36,7 +36,7 @@ target_compile_options(ppu_tests PRIVATE -ffunction-sections -fdata-sections)
 target_link_options(ppu_tests PRIVATE -Wl,--gc-sections)
 add_test(NAME ppu_mapper48 COMMAND ppu_tests)
 set(btstack ${root}/lib/pico-sdk/lib/btstack)
-add_executable(ble_tests ble_tests.cpp ${runtime}/ble.cpp ${runtime}/ble_gamepad.cpp ${runtime}/bluetooth_manager.cpp ${runtime}/gamepad.cpp
+add_executable(ble_tests ble_tests.cpp ${runtime}/ble.cpp ${runtime}/ble_gamepad.cpp ${runtime}/ble_tgp.cpp ${runtime}/bluetooth_manager.cpp ${runtime}/gamepad.cpp
   ${runtime}/input.cpp ${runtime}/controllers.cpp ${runtime}/protocol.cpp
   ${btstack}/src/btstack_hid_parser.c ${btstack}/src/btstack_util.c ${btstack}/src/ad_parser.c)
 target_include_directories(ble_tests PRIVATE ${btstack}/src ${btstack}/3rd-party/micro-ecc)
@@ -44,8 +44,10 @@ target_compile_definitions(ble_tests PRIVATE ENABLE_BLE=1)
 add_test(NAME ble_hid COMMAND ble_tests)
 foreach(scenario sync_cancel sync_disconnect lost_cancel startup_timeout recovery_off home scan_uuid
     cancel_stale_scan cancel_late_success connect_failed request_failed
-    idle_link disconnect_timeout pairing_failure physical_layout
-    left_stick home_combo remote_close discovery controls selection)
+    idle_link disconnect_timeout pairing_failure physical_layout pending_link_loss
+    left_stick home_combo remote_close discovery controls selection
+    tgp_v1 tgp_v2 tgp_id tgp_sync tgp_handover tgp_discovery_failure tgp_subscribe_failure tgp_request_failure
+    tgp_no_heartbeat tgp_sync_disconnect)
   add_test(NAME ble_${scenario} COMMAND ble_tests ${scenario})
 endforeach()
 add_executable(console_tests console_tests.cpp)

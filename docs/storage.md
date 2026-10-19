@@ -35,7 +35,7 @@ FatFs 支持 512、1024、2048、4096 字节逻辑扇区，底层 Flash 按 4096
 | `ble_mode` | `"auto"` | `auto` 自动连接兼容设备；`whitelist` 仅连接白名单 |
 | `ble_whitelist` | `[]` | 最多四项，每项包含 `mac` 和布尔值 `random` |
 | `ble_preferred` | `-1` | 白名单首选项下标，-1 表示不指定 |
-| `ble_scan_uuid` | `"0x1812"` | 自动扫描时匹配的 16 位服务 UUID |
+| `ble_scan_uuid` | `"0x1812"` | HID 自动扫描时匹配的 16 位服务 UUID；另自动识别 TGP 自定义服务 |
 
 配置通过临时文件和原子重命名写入，其他 State 文件保持原样。State 无效或 NES 配置损坏时使用默认配置，并禁用保存。此文件不包含游戏进度或电池 SRAM。
 

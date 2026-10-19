@@ -2,6 +2,7 @@
 // mocked at their public APIs. No controller or hardware is needed.
 #include "ble.hpp"
 #include "gamepad.hpp"
+#include "tgp_legacy.hpp"
 #include "controllers.hpp"
 #include "protocol.hpp"
 #include "storage.hpp"
@@ -23,7 +24,11 @@ uint32_t poll_delay=0;
 unsigned inits=0,polls=0,deinits=0,scans=0,connects=0,disconnects=0,cancels=0,reads=0,activity=0;
 unsigned off=0,on=0;
 uint8_t connect_result=0,discovery_result=0;
-uint8_t last_read_id=0;
+uint8_t last_read_id=0,gatt_result=0;
+uint16_t tgp_controller=1;
+unsigned gatt_requests=0,subscriptions=0,unsubscriptions=0;
+bool sync_subscription=false;
+btstack_packet_handler_t gatt_handler=nullptr,notification_handler=nullptr;
 btstack_packet_handler_t hci_handler=nullptr,hid_handler=nullptr,sm_handler=nullptr;
 bd_addr_t connected_peer{};
 bd_addr_type_t connected_type=BD_ADDR_TYPE_UNKNOWN;
@@ -56,6 +61,34 @@ void advertise(uint16_t uuid=0x1812,uint8_t type=1,uint8_t address=0xaa) {
     event({GAP_EVENT_ADVERTISING_REPORT,14,0,type,0xff,0xee,0xdd,0xcc,0xbb,address,0xb0,4,
            3,3,uint8_t(uuid),uint8_t(uuid>>8)});
 }
+void advertise_tgp(uint8_t version=2,uint16_t id=tgp_controller,uint8_t address=0xaa) {
+    std::vector<uint8_t> packet={GAP_EVENT_ADVERTISING_REPORT,0,0,1,0xff,0xee,0xdd,0xcc,0xbb,address,0xb0,31,
+        2,1,6,17,7};
+    for(int i=15;i>=0;--i) packet.push_back(tgp_legacy::ServiceUuid[i]);
+    const uint8_t identity[]={9,255,255,255,'T','G','P',version,uint8_t(id),uint8_t(id>>8)};
+    packet.insert(packet.end(),std::begin(identity),std::end(identity)); packet[1]=packet.size()-2;
+    event(packet);
+}
+void gatt(std::vector<uint8_t> packet) {
+    assert(gatt_handler); gatt_handler(HCI_EVENT_PACKET,0,packet.data(),packet.size());
+}
+void query_complete(uint8_t status=0) {gatt({GATT_EVENT_QUERY_COMPLETE,7,0x40,0,0,0,0,0,status});}
+void service_result() {
+    std::vector<uint8_t> packet(28); packet[0]=GATT_EVENT_SERVICE_QUERY_RESULT; packet[1]=26; packet[2]=0x40;
+    packet[8]=1; packet[10]=6;
+    reverse_128(tgp_legacy::ServiceUuid,packet.data()+12); gatt(packet);
+}
+void characteristic_result(bool notify=true) {
+    std::vector<uint8_t> packet(32); packet[0]=GATT_EVENT_CHARACTERISTIC_QUERY_RESULT; packet[1]=30; packet[2]=0x40;
+    packet[8]=2; packet[10]=3; packet[12]=6; packet[14]=ATT_PROPERTY_READ|(notify?ATT_PROPERTY_NOTIFY:0);
+    reverse_128(tgp_legacy::StateUuid,packet.data()+16); gatt(packet);
+}
+void tgp_sample(uint8_t buttons,uint8_t sequence,uint8_t version=2,uint16_t id=tgp_controller,uint8_t value_handle=3) {
+    assert(notification_handler);
+    std::vector<uint8_t> packet={GATT_EVENT_NOTIFICATION,18,0x40,0,0,0,0,0,value_handle,0,8,0,
+        'T','G','P',version,uint8_t(id),uint8_t(id>>8),sequence,buttons};
+    notification_handler(HCI_EVENT_PACKET,0,packet.data(),packet.size());
+}
 void linked(uint8_t status=0) {
     std::vector<uint8_t> e(36);
     e[0]=HCI_EVENT_META_GAP; e[1]=34; e[2]=GAP_SUBEVENT_LE_CONNECTION_COMPLETE;
@@ -73,7 +106,7 @@ void sample(std::initializer_list<uint8_t> data) {
 void report(uint8_t hat,uint8_t ab=0,uint8_t menu=0) {
     sample({0x80,0x80,0x80,0x80,hat,ab,menu,0,0,0});
 }
-void disconnected() {event({HCI_EVENT_DISCONNECTION_COMPLETE,4,0,0x40,0,0x13});}
+void disconnected(uint8_t reason=0x13) {event({HCI_EVENT_DISCONNECTION_COMPLETE,4,0,0x40,0,reason});}
 void pairing(uint8_t status,uint8_t reason) {
     std::vector<uint8_t> packet(14);
     packet[0]=SM_EVENT_PAIRING_COMPLETE; packet[1]=12; packet[2]=0x40;
@@ -100,6 +133,39 @@ namespace storage {Config config; bool state_ready() {return true;}}
 namespace usb {tgp::Receiver pad; bool dirty=false; bool disk_mode() {return disk;}}
 namespace power {void activity() {++::activity;}}
 extern "C" {
+void gatt_client_deserialize_service(const uint8_t *packet,int offset,gatt_client_service_t *service) {
+    service->start_group_handle=little_endian_read_16(packet,offset);
+    service->end_group_handle=little_endian_read_16(packet,offset+2);
+    reverse_128(packet+offset+4,service->uuid128); service->uuid16=0;
+}
+void gatt_client_deserialize_characteristic(const uint8_t *packet,int offset,gatt_client_characteristic_t *characteristic) {
+    characteristic->start_handle=little_endian_read_16(packet,offset);
+    characteristic->value_handle=little_endian_read_16(packet,offset+2);
+    characteristic->end_handle=little_endian_read_16(packet,offset+4);
+    characteristic->properties=little_endian_read_16(packet,offset+6);
+    reverse_128(packet+offset+8,characteristic->uuid128); characteristic->uuid16=0;
+}
+uint8_t gatt_client_discover_primary_services_by_uuid128(btstack_packet_handler_t callback,hci_con_handle_t handle,const uint8_t *uuid) {
+    assert(handle==0x40 && !std::memcmp(uuid,tgp_legacy::ServiceUuid,16));
+    ++gatt_requests; gatt_handler=callback; return gatt_result;
+}
+uint8_t gatt_client_discover_characteristics_for_service_by_uuid128(btstack_packet_handler_t callback,hci_con_handle_t handle,
+    gatt_client_service_t *service,const uint8_t *uuid) {
+    assert(handle==0x40 && service->start_group_handle==1 && !std::memcmp(uuid,tgp_legacy::StateUuid,16));
+    ++gatt_requests; gatt_handler=callback; return gatt_result;
+}
+void gatt_client_listen_for_characteristic_value_updates(gatt_client_notification_t *,btstack_packet_handler_t callback,
+    hci_con_handle_t handle,gatt_client_characteristic_t *characteristic) {
+    assert(handle==0x40 && characteristic->value_handle==3); notification_handler=callback;
+}
+void gatt_client_stop_listening_for_characteristic_value_updates(gatt_client_notification_t *) {++unsubscriptions;}
+uint8_t gatt_client_write_client_characteristic_configuration(btstack_packet_handler_t callback,hci_con_handle_t handle,
+    gatt_client_characteristic_t *characteristic,uint16_t configuration) {
+    assert(handle==0x40 && characteristic->value_handle==3 && configuration==1);
+    ++gatt_requests; ++subscriptions; gatt_handler=callback;
+    if(sync_subscription) {tgp_sample(0,0); query_complete();}
+    return gatt_result;
+}
 void btstack_assert_failed(const char *,uint16_t) {assert(false);}
 void hci_add_event_handler(btstack_packet_callback_registration_t *r) {hci_handler=r->callback;}
 void sm_add_event_handler(btstack_packet_callback_registration_t *r) {sm_handler=r->callback;}
@@ -149,6 +215,95 @@ uint16_t hids_host_descriptor_storage_get_descriptor_len(uint16_t,uint8_t) {
 int main(int argc,char **argv) {
     if(argc==2) {
         ble::init(); assert(inits==1 && on==1);
+        if(!std::strncmp(argv[1],"tgp_",4)) {
+            bool v1=!std::strcmp(argv[1],"tgp_v1"),handover=!std::strcmp(argv[1],"tgp_handover");
+            bool no_heartbeat=!std::strcmp(argv[1],"tgp_no_heartbeat");
+            if(!std::strcmp(argv[1],"tgp_id")) {
+                tgp_controller=0x1234; controllers::set_controller_id(tgp_controller);
+                assert(storage::config.controller==tgp_controller && usb::pad.id==tgp_controller && usb::dirty);
+                ble::poll(); // Apply the deferred settings before radio events arrive.
+            }
+            if(handover) {
+                controllers::init();
+                uint8_t neutral[]={128,128,128,128,255,0,0,0,0,0};
+                usb::pad.input.receive(neutral,10);
+                assert(input::hub.active_remote()==input::Source::Serial);
+            }
+            event({BTSTACK_EVENT_STATE,1,HCI_STATE_WORKING});
+            advertise_tgp(3); advertise_tgp(2,0); advertise_tgp(2,2); assert(!connects);
+            advertise_tgp(v1?1:2,tgp_controller); assert(connects==1);
+            linked(); assert(!gatt_requests); // GATT work is deferred out of HCI callback.
+            ble::poll(); assert(gatt_requests==1);
+            if(!std::strcmp(argv[1],"tgp_discovery_failure")) {
+                query_complete(); assert(disconnects==1 && !subscriptions);
+                ble::shutdown(); return 0;
+            }
+            service_result(); query_complete(); assert(gatt_requests==1);
+            if(!std::strcmp(argv[1],"tgp_request_failure")) gatt_result=ERROR_CODE_COMMAND_DISALLOWED;
+            ble::poll(); assert(gatt_requests==2);
+            if(gatt_result) {assert(disconnects==1); ble::shutdown(); return 0;}
+            characteristic_result(); query_complete(); assert(!subscriptions);
+            sync_subscription=!std::strcmp(argv[1],"tgp_sync");
+            ble::poll(); assert(subscriptions==1 && gatt_requests==3);
+            if(!std::strcmp(argv[1],"tgp_subscribe_failure")) {
+                query_complete(ATT_ERROR_WRITE_NOT_PERMITTED); assert(disconnects==1 && unsubscriptions==1);
+                ble::shutdown(); return 0;
+            }
+            if(!sync_subscription) {
+                if(!no_heartbeat) tgp_sample(0,0,v1?1:2);
+                query_complete();
+            }
+            assert(ble::status().state==ble::State::Ready);
+            if(no_heartbeat) {
+                assert(!ble::input_receiver().valid);
+                advance(349); assert(!disconnects);
+                advance(1); assert(disconnects==1 && unsubscriptions==1);
+                assert(ble::status().state==ble::State::Disconnecting);
+                tgp_sample(0x18,0); assert(!ble::buttons()); // Late notification is ignored.
+                disconnected(); advance(1000); advertise_tgp(); assert(connects==2);
+                assert(!off); ble::shutdown(); return 0;
+            }
+            assert(ble::input_receiver().valid && !ble::buttons());
+            tgp_sample(0x18,1,v1?1:2); assert(ble::buttons()==(gamepad::Right|gamepad::A));
+            tgp_sample(0,1,v1?1:2); assert(ble::buttons()); // Duplicate does not release or refresh.
+            tgp_sample(0,2,3); tgp_sample(0,2,2,2); tgp_sample(0,2,2,tgp_controller,4); assert(ble::buttons());
+            if(handover) {
+                assert(input::hub.active_remote()==input::Source::Serial && !input::hub.nes());
+                usb::pad.input.release(); assert(input::hub.active_remote()==input::Source::Ble && !input::hub.nes());
+                tgp_sample(0,2); tgp_sample(0x18,3);
+                assert(input::hub.nes()==(gamepad::Right|gamepad::A));
+            }
+            uint8_t seq=handover?4:2;
+            // A quiet user's neutral heartbeats keep the connection alive.
+            for(unsigned i=0;i<10;++i) {
+                advance(120); assert(!disconnects);
+                tgp_sample(0,seq++,v1?1:2);
+            }
+            tgp_sample(0xe0,seq++,v1?1:2);
+            assert(ble::buttons()==(gamepad::B|gamepad::Select|gamepad::Start));
+            advance(300);
+            tgp_sample(0,seq-1,v1?1:2); // Duplicate, bad version/ID/handle cannot keep the link alive.
+            tgp_sample(0,seq,3); tgp_sample(0,seq,2,2); tgp_sample(0,seq,2,tgp_controller,4);
+            advance(49); assert(ble::buttons() && !disconnects);
+            sync_disconnect=!std::strcmp(argv[1],"tgp_sync_disconnect");
+            advance(1); assert(!ble::buttons() && !ble::input_receiver().valid);
+            assert(disconnects==1 && unsubscriptions==1 && !off);
+            assert(ble::status().state==(sync_disconnect?ble::State::Backoff:ble::State::Disconnecting));
+            tgp_sample(0x18,seq); assert(!ble::buttons());
+            ble::poll(); assert(disconnects==1 && unsubscriptions==1); // Timeout fires only once.
+            if(!sync_disconnect) disconnected();
+            sync_disconnect=false;
+            advance(1000); advertise_tgp(v1?1:2,tgp_controller); assert(connects==2);
+            linked(); ble::poll(); service_result(); query_complete();
+            ble::poll(); characteristic_result(); query_complete(); ble::poll();
+            if(!sync_subscription) {tgp_sample(0,0,v1?1:2); query_complete();}
+            tgp_sample(0xe0,1,v1?1:2);
+            assert(ble::status().state==ble::State::Ready && ble::buttons()==(gamepad::B|gamepad::Select|gamepad::Start));
+            disconnected(); assert(!ble::buttons() && unsubscriptions==2);
+            advance(1000); advertise(); linked(); ready(); report(255); report(2,1);
+            assert(ble::buttons()==(gamepad::Right|gamepad::A)); // HID still works after TGP.
+            ble::shutdown(); return 0;
+        }
         if(!std::strcmp(argv[1],"discovery")) {
             event({BTSTACK_EVENT_STATE,1,HCI_STATE_WORKING});
             assert(ble::discover(1000)); ble::poll();
@@ -170,6 +325,32 @@ int main(int argc,char **argv) {
             disconnected(); advance(1000); advertise(); assert(connects==2);
             advance(1000); assert(ble::status().state==ble::State::Waiting);
             ble::stop_discovery(); ble::poll(); advertise(); assert(connects==3);
+            ble::shutdown(); return 0;
+        }
+        if(!std::strcmp(argv[1],"pending_link_loss")) {
+            event({BTSTACK_EVENT_STATE,1,HCI_STATE_WORKING});
+            for(unsigned attempt=0;attempt<2;++attempt) {
+                advertise(0x1812,0); assert(connects==attempt+1); linked();
+                // GATT reports the link loss before our HCI handler receives
+                // its underlying 0x3e event. This is not an incompatible HID.
+                ready(ATT_ERROR_HCI_DISCONNECT_RECEIVED);
+                assert(!disconnects && ble::status().state==ble::State::Discovering);
+                disconnected(ERROR_CODE_CONNECTION_FAILED_TO_BE_ESTABLISHED);
+                assert(ble::status().last_error==ERROR_CODE_CONNECTION_FAILED_TO_BE_ESTABLISHED);
+                advance(999); assert(ble::status().state==ble::State::Backoff);
+                advance(1); assert(ble::status().state==ble::State::Scanning);
+            }
+            advertise(0x1812,0); assert(connects==3); linked(); ready();
+            report(255); report(2,1);
+            assert(ble::status().state==ble::State::Ready && ble::buttons()==(gamepad::Right|gamepad::A));
+            assert(!off && !disconnects); // No extra disconnect or radio restart.
+            disconnected(); advance(1000);
+            advertise(0x1812,0); linked(); ready(ERROR_CODE_UNSPECIFIED_ERROR);
+            assert(!disconnects); ble::poll(); assert(disconnects==1);
+            disconnected(); advance(1000);
+            unsigned before=connects; advertise(0x1812,0); assert(connects==before);
+            advance(29000); advertise(0x1812,0); assert(connects==before+1);
+            // A real profile failure with no HCI link loss keeps its cooldown.
             ble::shutdown(); return 0;
         }
         if(!std::strcmp(argv[1],"selection")) {
@@ -316,7 +497,7 @@ int main(int argc,char **argv) {
         if(!std::strcmp(argv[1],"pairing_failure")) {
             event({BTSTACK_EVENT_STATE,1,HCI_STATE_WORKING}); advertise(0x1812,0); linked();
             // GATT receives the ATT failure before the app's pairing callback.
-            ready(ERROR_CODE_UNSPECIFIED_ERROR); assert(disconnects==1);
+            ready(ERROR_CODE_UNSPECIFIED_ERROR); assert(!disconnects);
             pairing(ERROR_CODE_AUTHENTICATION_FAILURE,SM_REASON_PAIRING_NOT_SUPPORTED);
             assert(disconnects==1); // Same failure must not reset the disconnect timeout.
             disconnected(); advance(1000);
@@ -327,6 +508,9 @@ int main(int argc,char **argv) {
             disconnected(); advance(1000);
             advertise(0x1812,0,0xac); linked(); pairing(0,0); ready(); report(2,1);
             assert(disconnects==2 && ble::buttons()==(gamepad::Right|gamepad::A));
+            disconnected(); advance(1000); advertise(0x1812,0,0xad); linked();
+            pairing(ERROR_CODE_UNSPECIFIED_ERROR,SM_REASON_UNSPECIFIED_REASON);
+            assert(disconnects==3); // Pairing's 0x1f is a genuine failure.
             ble::shutdown(); return 0;
         }
         if(!std::strcmp(argv[1],"idle_link")) {

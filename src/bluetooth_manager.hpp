@@ -7,13 +7,16 @@ struct Configuration {
     bool enabled=true;
     uint16_t scan_uuid=0x1812;
     Policy policy;
+    uint16_t controller_id=1;
 };
 struct Candidate {
     Peer peer;
     char name[32]{};
     int8_t rssi=0;
     uint32_t seen_at=0;
-    bool hid=false;
+    bool hid=false,tgp=false;
+    uint16_t controller_id=0;
+    uint8_t tgp_version=0;
 };
 class Manager {
 public:
@@ -30,8 +33,8 @@ public:
     bool finish_discovery(uint32_t now);
     bool discovering() const {return (discovery_ && !done_) || discovery_pending_;}
     // Merge advertising and scan-response metadata; the manager owns the cache.
-    bool observe(const Candidate &item,bool complete_name);
-    bool accepts(const Peer &peer,bool hid,uint32_t now) const;
+    const Candidate *observe(const Candidate &item,bool complete_name);
+    bool accepts(const Peer &peer,bool compatible,uint32_t now) const;
     size_t candidates(Candidate *out,size_t capacity) const;
     size_t count() const {return count_;}
 private:

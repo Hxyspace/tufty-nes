@@ -29,7 +29,7 @@ int main() {
     hub.local(0); assert(hub.take_menu().released==input::Confirm);
     send(serial,1); hub.local(input::LocalA);
     serial.release(); assert(hub.active_remote()==Source::Ble);
-    assert(hub.nes()==A && !hub.status(Source::Ble).armed); // Local A survives, held backup B is blocked.
+    assert(hub.nes()==Left && !hub.status(Source::Ble).armed); // Local left survives, held backup B is blocked.
     send(ble); assert(hub.status(Source::Ble).armed);
     hub.local(0); hub.take_menu(); send(ble,2); assert(hub.nes()==B);
     assert(hub.nes(true)==A);

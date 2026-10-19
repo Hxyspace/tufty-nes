@@ -20,7 +20,7 @@ Console 设置：115200 波特率、关闭本地回显、启用 DTR。连接后�
 | `help` | 显示命令列表 |
 | `status` | 查看文件系统、游戏数量及手柄状态 |
 | `brightness 1..100` | 调整屏幕亮度 |
-| `padid 1..65535` | 设置手柄 ID，默认 1 |
+| `padid 1..65535` | 设置串口及 TGP BLE 手柄 ID，默认 1；XTARK HID 不使用 ID |
 | `swapab 0/1` | 关闭或启用 A/B 互换 |
 | `pad status` | 查看活跃远程来源、各来源开关与输入可用状态 |
 | `serial on` / `serial off` | 启用 / 关闭串口手柄，Console 始终可用 |
@@ -50,7 +50,7 @@ Console 设置：115200 波特率、关闭本地回显、启用 DTR。连接后�
 
 修改设置后执行 `save`。启动不同游戏、通过命令进入磁盘模式前也会保存配置；保存失败时会显示错误。`usb disk`、`bootsel` 会先回复状态再切换。
 
-串口与 BLE 同时可用时，最先成为活跃来源的手柄持续控制，另一来源保持连接但不混入按键。活跃来源禁用、断开或输入会话失效后才交接；接替的手柄需先松开按键、回中摇杆。BLE 静置不触发交接。本机按键始终可用，使用 `pad status` 查看当前来源。
+串口与 BLE 同时可用时，最先成为活跃来源的手柄持续控制，另一来源保持连接但不混入按键。活跃来源禁用、断开或输入会话失效后才交接；接替的手柄需先松开按键、回中摇杆。HID 静置或 TGP 正常发送中立心跳时不触发交接。本机按键始终可用，使用 `pad status` 查看当前来源。
 
 ## 休眠与唤醒
 
@@ -79,11 +79,13 @@ Windows：
 python -m pip install pyserial
 python tools/serial_gamepad.py
 python tools/serial_gamepad.py --port COM7 --controller-id 1
+python tools/serial_gamepad.py --port COM7 --v1
+python tools/serial_gamepad.py --port COM7 --v2
 ```
 
-设备 `padid` 必须与发送器的 `--controller-id` 相同。串口仅使用 TGP v3，与 BLE 共用十字节按键 Report；固件和脚本需要一起更新，旧版 v1/v2 发送器不再支持。
+设备 `padid` 必须与发送器的 `--controller-id` 相同。脚本默认使用 TGP v3，与 BLE HID 共用十字节按键 Report。`--v1`／`--v2` 切换为八字节协议，两者均发送完整八键，仅版本号不同，不支持 Esc/Home，返回菜单使用 Tufty 自身的 Home。详见下文 [TGP 模式](#tgp-v1v2-模式)。
 
-发送器只在运行脚本的终端窗口处于前台时接收按键；切到其他窗口会自动释放全部按键和 Home，串口连接继续保持。Windows Terminal 请在前台启动脚本，建议使用独立窗口。Esc 按下/松开发送 Home 状态；Ctrl+C 释放输入、发送关闭 Report 并退出。完整键位见 [README](../README.md#操作)。`--buttons` 固定按键测试不受窗口焦点影响，参数仍为 NES 八键位图，脚本会转换为 Report。
+发送器只在运行脚本的终端窗口处于前台时接收按键；切到其他窗口会自动释放全部按键和 Home，串口连接继续保持。Windows Terminal 请在前台启动脚本，建议使用独立窗口。v3 下 Esc 按下/松开发送 Home 状态；Ctrl+C 释放输入并结束会话。完整键位见 [README](../README.md#操作)。`--buttons` 固定按键测试不受窗口焦点影响，参数在所有版本中均为 NES 八键位图，由脚本转换为对应报文。
 
 Linux 暂只支持发送固定按键状态：
 
@@ -131,13 +133,19 @@ save
 
 请替换成发现的地址和类型。白名单最多四项，首选设备有两秒扫描优先窗口，未发现时允许其他白名单设备连接。`ble target MAC public|random` 是替换为单设备白名单的快捷方式；`ble target auto` 保留列表并恢复自动模式。清空白名单不会自动切换模式，白名单模式下列表为空就不自动连接。
 
-设置统一保存到 `/state/nes.json`，不再读取磁盘 `config/gamepad.json`。安卓地址可能轮换，固定某次随机 MAC 不能保证重启后仍可连接，建议使用自动模式。BLE 不使用串口的 `padid`。`serial off` 只关闭手柄会话，不影响 Console。
+设置统一保存到 `/state/nes.json`，不再读取磁盘 `config/gamepad.json`。安卓地址可能轮换，固定某次随机 MAC 不能保证重启后仍可连接，建议使用自动模式。BLE HID 不使用串口的 `padid`。`serial off` 只关闭手柄会话，不影响 Console。
 
 断连后会自动等待重连。安卓点“关闭手柄”后 Tufty 会断开并继续扫描，重新开启即可连接，无需关闭手机系统蓝牙。长时间不操作不会触发 BLE 超时重连；游戏与菜单空闲休眠规则仍然生效。休眠会关闭无线，需要用 Tufty 实体按键唤醒。USB 磁盘模式不启用手柄连接。
 
+### TGP v1/v2 模式
+
+TGP v1/v2 均支持串口和 BLE 连接。默认 ID 为 1，修改时两端保持一致，用 `padid` 设置 Tufty，再 `save`。BLE 自动识别 TGP 服务；若之前固定了其他 MAC，可用 `ble target auto` 恢复自动连接。
+
+早期 TGP v1 发送器只有方向和 A；v2 增加 B、Select、Start，本固件对 v1/v2 均按完整八键接收。两者均没有 Home，返回菜单使用 Tufty 自身的 Home。TGP 需要 120 ms 心跳；BLE 订阅就绪后 350 ms 无首帧，或此后 350 ms 无有效状态，会释放输入、取消订阅并断开连接，随后自动扫描重连。HID 静置不受此超时影响。串口仍在 350 ms 释放输入、1200 ms 结束会话，发送器连接 CDC1，Console 使用 CDC0。本仓库脚本默认 v3，也可用 `--v1`／`--v2`。报文及握手见 [手柄协议](gamepad-protocol.md#tgp-v1v2)。
+
 需要重新连接时使用 `ble scan`；`ble off` / `ble on` 关闭或启用 BLE，执行 `save` 保存开关和目标设置。若无法连接，先检查目标地址和安卓模式，再用 `ble status` 查看状态。`ble trace on` 后执行 `ble scan` 可获取 HID 描述符诊断，完成后用 `ble trace off` 关闭。
 
-当前仅支持 XTARK 十字节 HID 布局，旧版安卓九字节格式及其他 HID 手柄需单独适配。串口与 BLE 接入约定见 [手柄协议](gamepad-protocol.md)，安卓发送端实现细节见安卓手柄项目的 `docs/hid-protocol.md`。
+HID 模式支持 XTARK 十字节 Report 布局，其他 HID 布局需单独适配。串口与 BLE 接入约定见 [手柄协议](gamepad-protocol.md)。
 
 ## 管理游戏
 
