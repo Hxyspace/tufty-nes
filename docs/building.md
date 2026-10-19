@@ -67,6 +67,8 @@ python3 tools/deps.py --profile host --radio # 准备含真实 HID 解析器的�
 
 Core 0 运行模拟器、菜单、TinyUSB 和 BLE；Core 1 负责屏幕转换及 PIO/DMA 输出。串口输入量较小，BLE 使用 CYW43 polling 架构，在模拟器周期钩子及菜单/帧等待中服务，不占用显示核。服务间隔目标为 1 ms，无线 HCI 每次最多处理 4 轮。`ble status` 的 `poll_gap_ms` 记录最大实际轮询间隔，`poll_work_ms` 记录 CYW43 单次轮询最大耗时，`restarts` 记录超时恢复次数；前者还包含两次轮询间其他工作耗时及首次控制器初始化。
 
+`src/protocol.*` 处理 CDC1 的 TGP v3 分帧、握手和超时，`src/ble.cpp` 处理 BLE 连接与报告筛选。两者使用 `src/gamepad.*` 的同一套十字节 Report 解析，各自保留独立的摇杆、Home 和组合键状态。本机 GPIO 直接映射为 NES 按键和 Home，再与远程输入合并，无需包装成 Report。
+
 连接超时先取消连接，再关闭 HCI 控制器；连接失败、启动或取消/断开无响应时也会关闭控制器，等待 OFF 后自动重新启动。正常空闲扫描及已就绪连接不会因输入静默触发此恢复；就绪后不发起周期性 GATT 检查。运行时恢复保留栈及事件注册，不重复初始化 GATT，也不写入 Flash 配对库。调用可能同步回调的 BTstack API 前先设置等待状态，避免回调的完成状态被覆盖。
 
 USB 磁盘模式不启动无线。深度休眠前释放按键并关闭无线栈。BLE 临时配对记录只存 RAM，启动包装器和 RAM 数据库避免 SDK 默认 Flash TLV 占用 `/state`；重启后重新连接。

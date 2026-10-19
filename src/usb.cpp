@@ -186,10 +186,10 @@ void poll() {
         int c=tud_cdc_n_read_char(1);
         if(connected && !mode) {
             pad.byte(c,now);
-            if(pad.buttons || pad.menu) power::activity();
+            if(pad.input.buttons || pad.input.home) power::activity();
         }
     }
-    if(!mode) pad.poll(now);
+    if(!mode && pad.poll(now)) power::activity();
     console_tx.drain(0); protocol_tx.drain(1);
 }
 void shutdown() {

@@ -1,5 +1,5 @@
 #include "ble.hpp"
-#include "hid_gamepad.hpp"
+#include "gamepad.hpp"
 #include "storage.hpp"
 #include "power.hpp"
 #include "usb.hpp"
@@ -27,7 +27,7 @@ bd_addr_t peer{},skipped_peer{};
 bd_addr_type_t peer_type=BD_ADDR_TYPE_LE_PUBLIC,skipped_type=BD_ADDR_TYPE_UNKNOWN;
 uint32_t skipped_at=0;
 uint8_t descriptor_storage[1024];
-hidpad::Receiver receiver;
+gamepad::Receiver receiver;
 btstack_packet_callback_registration_t hci_registration{},sm_registration{};
 uint32_t now() {return to_ms_since_boot(get_absolute_time());}
 const char *name() {
@@ -122,7 +122,7 @@ bool select_layout(uint8_t instances) {
             if(item.usage_page!=1 || item.usage!=0x39 || item.bit_pos!=32 ||
                item.size!=4 || item.global_logical_minimum!=0 ||
                iterator.global_logical_maximum!=7 || (item.descriptor_item.item_value&0x47)!=0x42) continue;
-            if(btstack_hid_get_report_size_for_id(item.report_id,HID_REPORT_TYPE_INPUT,map,bytes)!=hidpad::ReportBytes ||
+            if(btstack_hid_get_report_size_for_id(item.report_id,HID_REPORT_TYPE_INPUT,map,bytes)!=gamepad::ReportBytes ||
                !button_layout(map,bytes,item.report_id)) continue;
             service_index=index;
             report_id=item.report_id==HID_REPORT_ID_UNDEFINED?0:uint8_t(item.report_id);
@@ -154,11 +154,11 @@ void hid_event(uint8_t packet_type,uint16_t,uint8_t *packet,uint16_t size) {
             uint16_t bytes=gattservice_subevent_hid_report_get_report_len(packet);
             const uint8_t *report=gattservice_subevent_hid_report_get_report(packet);
             // BTstack prepends the Report ID, although GATT notifications do not.
-            if(bytes!=hidpad::ReportBytes+1 || size<9+bytes || report[0]!=report_id) {
+            if(bytes!=gamepad::ReportBytes+1 || size<9+bytes || report[0]!=report_id) {
                 receiver.receive(nullptr,0); return;
             }
             if(remote_close) return;
-            if(hidpad::disconnect_report(report+1,bytes-1)) {
+            if(gamepad::disconnect_report(report+1,bytes-1)) {
                 receiver.release(); remote_close=true;
                 std::printf("BLE: REMOTE CLOSE; disconnecting gamepad\n");
                 return;
@@ -199,7 +199,7 @@ void event(uint8_t packet_type,uint16_t,uint8_t *packet,uint16_t size) {
             bd_addr_type_t type=static_cast<bd_addr_type_t>(gap_event_advertising_report_get_address_type(packet));
             if(storage::config.ble_peer[0]) {
                 bd_addr_t target;
-                if(!hidpad::address(storage::config.ble_peer,target) || std::memcmp(target,address,6) ||
+                if(!gamepad::address(storage::config.ble_peer,target) || std::memcmp(target,address,6) ||
                    storage::config.ble_random!=(type==BD_ADDR_TYPE_LE_RANDOM)) return;
             }
             if(type==skipped_type && !std::memcmp(address,skipped_peer,6) && now()-skipped_at<30000) return;
@@ -374,7 +374,7 @@ bool command(const char *line) {
         std::printf("BLE: TARGET auto; use save to persist\n");
     } else if(!std::strncmp(line,"ble target ",11)) {
         char address[18],type[7],tail; uint8_t bytes[6];
-        if(std::sscanf(line+11,"%17s %6s %c",address,type,&tail)!=2 || !hidpad::address(address,bytes) ||
+        if(std::sscanf(line+11,"%17s %6s %c",address,type,&tail)!=2 || !gamepad::address(address,bytes) ||
            (std::strcmp(type,"public") && std::strcmp(type,"random"))) {
             std::printf("BLE: INVALID_TARGET; ble target AA:BB:CC:DD:EE:FF public|random\n");
         } else {

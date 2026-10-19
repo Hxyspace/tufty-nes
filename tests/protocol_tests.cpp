@@ -8,34 +8,103 @@
 static std::string output;
 static bool send(const char *s,size_t n) {output.append(s,n); return true;}
 static void line(tgp::Receiver &r,const std::string &s,uint32_t now) {for(unsigned char c:s) r.byte(c,now);}
-int main() {
+static constexpr uint8_t neutral[]={128,128,128,128,255,0,0,0,0,0};
+static const char *token="0123456789abcdef";
+static std::string frame(const uint8_t *report,uint8_t sequence,uint16_t id=1,uint8_t version=3) {
+    const uint8_t prefix[]={'T','G','P',version,uint8_t(id),uint8_t(id>>8),sequence};
+    constexpr char hex[]="0123456789abcdef";
+    std::string wire="#TGP:";
+    for(uint8_t byte:prefix) {wire+=hex[byte>>4]; wire+=hex[byte&15];}
+    for(size_t i=0;i<gamepad::ReportBytes;++i) {wire+=hex[report[i]>>4]; wire+=hex[report[i]&15];}
+    return wire+'\n';
+}
+static void hello(tgp::Receiver &r,uint32_t now=0) {
+    line(r,std::string("#TGP:HELLO:0001:")+token+":3\r\n",now);
+    assert(r.active);
+}
+static void serial_tests() {
     tgp::Receiver r; r.send=send;
-    line(r,"#TGP:5447500201000001\n",0); assert(!r.active && !r.buttons);
-    line(r,"#TGP:HELLO:0002:0123456789abcdef\n",1); assert(!r.active);
-    line(r,"#TGP:HELLO:0001:0123456789abcdef\r\n",2);
-    assert(r.active && output=="#TGP:READY:0123456789abcdef\n");
-    line(r,"#TGP:544750010100001f\n",10);
-    assert(r.buttons==(tgp::Up|tgp::Down|tgp::Left|tgp::Right|tgp::A));
-    line(r,"#TGP:54475002010001ff\n",20); assert(r.buttons==255);
-    line(r,"#TGP:5447500201000100\n",21); assert(r.buttons==255); // Duplicate.
-    r.poll(369); assert(r.buttons==255);
-    r.poll(370); assert(!r.buttons && r.active); // Input release != session close.
-    r.poll(520); assert(output.find("#TGP:ALIVE:")!=std::string::npos);
-    r.poll(1220); assert(!r.active && output.find("#TGP:BYE:")!=std::string::npos);
-    line(r,"#TGP:HELLO:0001:0123456789abcdef\n",1300);
-    line(r,std::string(150,'x')+"#TGP:54475002010002ff\n",1310); assert(!r.buttons);
-    line(r,"#TGP:54475002010002aa\n",1320); assert(r.buttons==0xaa);
-    line(r,"#TGP:MENU:fedcba9876543210\n",1330); assert(!r.menu);
-    line(r,"#TGP:MENU:0123456789abcdef\n",1340); assert(r.menu && !r.buttons);
-    line(r,"#TGP:END:0123456789abcdef\n",1350); assert(!r.active && !r.menu);
-    // Sequence wrap, malformed bits, wrong version, controller ID.
-    uint8_t p[8]={'T','G','P',1,1,0,255,31},seq=0,keys=0;
-    assert(tgp::decode(p,8,1,seq,keys) && seq==255);
-    p[7]=32; assert(!tgp::decode(p,8,1,seq,keys));
-    p[3]=2; assert(tgp::decode(p,8,1,seq,keys));
-    assert(!tgp::decode(p,8,2,seq,keys));
-    p[3]=3; assert(!tgp::decode(p,8,1,seq,keys));
-    for(unsigned i=0;i<8;++i) assert(!tgp::decode(p,i,1,seq,keys));
+    line(r,frame(neutral,0),0); assert(!r.active && !r.input.buttons);
+    // Only v3 handshakes with the configured nonzero ID are accepted.
+    for(const char *invalid:{"#TGP:HELLO:0002:0123456789abcdef:3\n",
+        "#TGP:HELLO:0001:0123456789abcdef\n","#TGP:HELLO:0001:0123456789abcdef:2\n",
+        "#TGP:HELLO:0001:0123456789abcdeF:3\n","#TGP:HELLO:0001:0123456789abcdeg:3\n"}) {
+        line(r,invalid,1); assert(!r.active);
+    }
+    hello(r,2); assert(output=="#TGP:READY:0123456789abcdef:3\n");
+    uint8_t report[10]; std::memcpy(report,neutral,10);
+    report[4]=2; report[5]=1;
+    assert(frame(report,0)=="#TGP:5447500301000080808080020100000000\n");
+    line(r,frame(report,0),10); assert(r.input.buttons==(gamepad::Right|gamepad::A));
+    line(r,frame(neutral,0),20); assert(r.input.buttons==(gamepad::Right|gamepad::A)); // Duplicate.
+    line(r,frame(neutral,1,2),20); assert(r.received==1); // Wrong ID.
+    for(uint8_t version:{1,2,4}) line(r,frame(neutral,1,1,version),20);
+    line(r,"#TGP:54475002010001ff\n",20); // Old eight-byte format.
+    line(r,"#TGP:MENU:0123456789abcdef\n",20);
+    line(r,"#TGP:END:0123456789abcdef\n",20);
+    assert(r.received==1 && r.active && !r.input.home);
+    hello(r,100); // Repeated HELLO must not reset input age or sequence tracking.
+    line(r,frame(neutral,0),110); assert(r.received==1);
+    r.poll(359); assert(r.input.buttons);
+    r.poll(360); assert(!r.input.buttons && !r.input.home && r.active);
+    r.poll(502); assert(output.find("#TGP:ALIVE:0123456789abcdef\n")!=std::string::npos);
+    r.poll(1210); assert(!r.active && output.find("#TGP:BYE:0123456789abcdef\n")!=std::string::npos);
+
+    hello(r,1300);
+    line(r,std::string(150,'x')+frame(report,1),1310); assert(!r.input.buttons);
+    line(r,frame(report,255),1320); assert(r.input.buttons);
+    line(r,frame(neutral,0),1330); assert(!r.input.buttons); // Sequence wraps.
+    report[6]=16; line(r,frame(report,1),1340); assert(r.input.home);
+    line(r,frame(neutral,2),1350); assert(!r.input.home);
+    report[6]=0; line(r,frame(report,3),1360);
+    // Garbage, bad hex, and partial frames cannot refresh the watchdog.
+    std::string invalid=frame(neutral,4); invalid[20]='z'; line(r,invalid,1370);
+    invalid=frame(neutral,4); invalid.erase(20,2); line(r,invalid,1380);
+    r.poll(1710); assert(!r.input.buttons && r.active);
+    line(r,frame(report,4),1720); assert(r.input.buttons);
+    line(r,frame(gamepad::DisconnectReport,5),1730);
+    assert(!r.active && !r.input.buttons && !r.input.home);
+    line(r,frame(report,6),1740); assert(!r.active && !r.input.buttons);
+
+    // Shared decoding: axes, D-pad precedence, and Home agree across transports.
+    hello(r,2000); gamepad::Receiver ble;
+    uint8_t samples[][10]={
+        {80,128,128,128,255,1,0,0,0,0}, {90,128,128,128,255,0,0,0,0,0},
+        {96,128,128,128,255,0,0,0,0,0}, {0,0,128,128,255,0,0,0,0,0},
+        {0,0,128,128,4,0,0,0,0,0}, {128,128,128,128,255,0,16,0,0,0}};
+    uint8_t seq=0;
+    for(auto &sample:samples) {
+        assert(ble.receive(sample,10,2000)); line(r,frame(sample,seq++),2000);
+        assert(r.input.buttons==ble.buttons && r.input.home==ble.home);
+    }
+    r.poll(2350); assert(!r.input.home && ble.home); // Serial timeout is isolated.
+    r.reset(); assert(ble.home);
+
+    // Repeated serial heartbeats must preserve the shared L3+R3 hold timer.
+    hello(r,3000); std::memcpy(report,neutral,10); report[6]=0x60; seq=0;
+    for(uint32_t at=3000;at<=4440;at+=120) {
+        line(r,frame(report,seq++),at); assert(!r.poll(at) && !r.input.home);
+    }
+    assert(!r.poll(4499)); assert(r.poll(4500) && r.input.home);
+    assert(!r.poll(4510)); // A latched gesture only fires once.
+    line(r,frame(neutral,seq++),4520); assert(!r.input.home);
+    line(r,frame(report,seq++),4600); r.poll(4950); assert(!r.input.home);
+    line(r,frame(report,seq++),5000); r.poll(6000); assert(!r.input.home); // Stale reports cannot finish a gesture.
+    r.reset(); assert(!r.input.home && !r.input.buttons);
+
+    // A new nonce replaces held input and all gesture/hysteresis state.
+    hello(r,7000); report[6]=16; line(r,frame(report,0),7000); assert(r.input.home);
+    line(r,"#TGP:HELLO:0001:fedcba9876543210:3\n",7010);
+    assert(!r.input.home && !r.input.buttons && !r.seen);
+    line(r,frame(neutral,0),7020); assert(r.received);
+    // Unsigned time arithmetic also covers the millisecond counter wrapping.
+    r.reset(); hello(r,0xffffff00u); report[6]=16; line(r,frame(report,0),0xffffff00u);
+    r.poll(uint32_t(0xffffff00u+349)); assert(r.input.home);
+    r.poll(uint32_t(0xffffff00u+350)); assert(!r.input.home && r.active);
+    r.poll(uint32_t(0xffffff00u+1200)); assert(!r.active);
+}
+int main() {
+    serial_tests();
     std::vector<uint8_t> rom(16+16384+8192); std::memcpy(rom.data(),"NES\x1a",4);
     rom[4]=1; rom[5]=1;
     ines::Image image;

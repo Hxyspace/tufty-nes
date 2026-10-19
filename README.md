@@ -7,7 +7,7 @@
 - 从 `/system/roms/` 加载 iNES 1.0 和兼容的 NES 2.0 游戏，无需将 ROM 编译进固件。
 - 卡片式游戏菜单，支持自定义封面和背景。
 - 双 USB 串口：CDC0 用于 Console，CDC1 用于手柄。
-- Windows 键盘发送器，支持 NES 八键及 TGP v1/v2 协议。
+- Windows 键盘发送器，使用 TGP v3，与 BLE 共用按键 Report 和 Home 操作。
 - BLE HID：适配 XTARK 实体手柄，支持左摇杆方向、L3+R3 长按返回菜单、自动重连及安卓主动关闭手柄。
 - USB MSC 磁盘模式，可直接复制和管理游戏文件。
 - 保存屏幕亮度、手柄 ID、按键映射和上次选择的游戏。

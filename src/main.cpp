@@ -7,6 +7,7 @@
 #include "ines.hpp"
 #include "power.hpp"
 #include "ble.hpp"
+#include "gamepad.hpp"
 #include "InfoNES.h"
 #include "InfoNES_System.h"
 #include "InfoNES_Mapper.h"
@@ -67,15 +68,15 @@ int InfoNES_Video() {
     return InfoNES_Reset()<0?1:0;
 }
 static uint8_t local_game() {
-    return (!gpio_get(BTN_A)?tgp::A:0)|(!gpio_get(BTN_B)?tgp::B:0)|
-        (!gpio_get(BTN_C)?tgp::Start:0)|(!gpio_get(BTN_UP)?tgp::Up:0)|(!gpio_get(BTN_DOWN)?tgp::Down:0);
+    return (!gpio_get(BTN_A)?gamepad::A:0)|(!gpio_get(BTN_B)?gamepad::B:0)|
+        (!gpio_get(BTN_C)?gamepad::Start:0)|(!gpio_get(BTN_UP)?gamepad::Up:0)|(!gpio_get(BTN_DOWN)?gamepad::Down:0);
 }
 void InfoNES_PadState(DWORD *p1,DWORD *p2,DWORD *system) {
     tufty_service();
-    uint8_t keys=local_game()|usb::pad.buttons|ble::buttons();
+    uint8_t keys=local_game()|usb::pad.input.buttons|ble::buttons();
     if(storage::config.swap_ab) keys=(keys&~3)|((keys&1)<<1)|((keys&2)>>1);
     *p1=keys; *p2=0;
-    *system=(!gpio_get(BTN_HOME) || ble::home() || usb::pad.menu || usb::disk_requested || usb::rescan_requested || power::pending())?PAD_SYS_QUIT:0;
+    *system=(!gpio_get(BTN_HOME) || ble::home() || usb::pad.input.home || usb::disk_requested || usb::rescan_requested || power::pending())?PAD_SYS_QUIT:0;
 }
 void InfoNES_SoundInit() {}
 int InfoNES_SoundOpen(int,int) {return 0;}
@@ -95,10 +96,10 @@ int InfoNES_LoadFrame() {
     return 0;
 }
 static uint16_t menu_buttons() {
-    uint16_t keys=usb::pad.buttons|ble::buttons();
-    if(!gpio_get(BTN_A) || !gpio_get(BTN_UP)) keys|=tgp::Left;
-    if(!gpio_get(BTN_C) || !gpio_get(BTN_DOWN)) keys|=tgp::Right;
-    if(!gpio_get(BTN_B)) keys|=tgp::A;
+    uint16_t keys=usb::pad.input.buttons|ble::buttons();
+    if(!gpio_get(BTN_A) || !gpio_get(BTN_UP)) keys|=gamepad::Left;
+    if(!gpio_get(BTN_C) || !gpio_get(BTN_DOWN)) keys|=gamepad::Right;
+    if(!gpio_get(BTN_B)) keys|=gamepad::A;
     return keys;
 }
 static void flush_config() {
@@ -154,17 +155,16 @@ int main() {
             selected=storage::count?std::min<int>(selected,storage::count-1):0; position=selected;
         }
         uint16_t keys=menu_buttons();
-        bool home=!gpio_get(BTN_HOME) || ble::home();
-        power::idle(keys || home || usb::pad.menu);
+        bool home=!gpio_get(BTN_HOME) || ble::home() || usb::pad.input.home;
+        power::idle(keys || home);
         if(power::pending()) {power::process(); continue;}
         if(home) suppress=true;
         else if(!keys) suppress=false;
         uint16_t pressed=suppress?0:keys&~previous; previous=keys;
-        if(pressed&(tgp::Left|tgp::Up)) selected=std::max(0,selected-1);
-        if(pressed&(tgp::Right|tgp::Down)) selected=std::min<int>(std::max<int>(0,storage::count-1),selected+1);
-        if(storage::count && (pressed&(tgp::Left|tgp::Right|tgp::Up|tgp::Down))) storage::error[0]=0;
-        usb::pad.menu=false;
-        if(pressed&tgp::A && storage::count) {
+        if(pressed&(gamepad::Left|gamepad::Up)) selected=std::max(0,selected-1);
+        if(pressed&(gamepad::Right|gamepad::Down)) selected=std::min<int>(std::max<int>(0,storage::count-1),selected+1);
+        if(storage::count && (pressed&(gamepad::Left|gamepad::Right|gamepad::Up|gamepad::Down))) storage::error[0]=0;
+        if(pressed&gamepad::A && storage::count) {
             power::menu(false);
             storage::error[0]=0;
             if(storage::load(selected,rom_data,rom_bytes)) {
@@ -174,7 +174,7 @@ int main() {
                 }
                 InfoNES_Main(true);
             }
-            usb::pad.menu=false; suppress=true; previous=menu_buttons();
+            suppress=true; previous=menu_buttons();
             power::menu(true);
             opened=to_ms_since_boot(get_absolute_time());
         }

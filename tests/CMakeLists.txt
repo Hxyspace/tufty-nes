@@ -23,7 +23,7 @@ if(SANITIZERS)
 endif()
 include_directories(${runtime} ${root}/config ${upstream}/drivers/fatfs
   ${root}/lib/littlefs ${root}/lib/cjson ${CMAKE_CURRENT_LIST_DIR}/stubs)
-add_executable(protocol_tests protocol_tests.cpp ${runtime}/protocol.cpp)
+add_executable(protocol_tests protocol_tests.cpp ${runtime}/protocol.cpp ${runtime}/gamepad.cpp)
 add_test(NAME protocol COMMAND protocol_tests)
 add_executable(ppu_tests ppu_tests.cpp ${upstream}/infones/InfoNES.cpp)
 target_include_directories(ppu_tests BEFORE PRIVATE ${CMAKE_CURRENT_LIST_DIR}/core_stubs ${upstream}/infones)
@@ -32,7 +32,7 @@ target_compile_options(ppu_tests PRIVATE -ffunction-sections -fdata-sections)
 target_link_options(ppu_tests PRIVATE -Wl,--gc-sections)
 add_test(NAME ppu_mapper48 COMMAND ppu_tests)
 set(btstack ${root}/lib/pico-sdk/lib/btstack)
-add_executable(ble_tests ble_tests.cpp ${runtime}/ble.cpp ${runtime}/hid_gamepad.cpp
+add_executable(ble_tests ble_tests.cpp ${runtime}/ble.cpp ${runtime}/gamepad.cpp
   ${btstack}/src/btstack_hid_parser.c ${btstack}/src/btstack_util.c ${btstack}/src/ad_parser.c)
 target_include_directories(ble_tests PRIVATE ${btstack}/src ${btstack}/3rd-party/micro-ecc)
 target_compile_definitions(ble_tests PRIVATE ENABLE_BLE=1)
@@ -52,10 +52,10 @@ target_compile_definitions(power_platform_tests PRIVATE BTN_A=7 BTN_B=9 BTN_C=10
 add_test(NAME power_platform COMMAND power_platform_tests)
 add_executable(disk_ui_tests disk_ui_tests.cpp ${runtime}/disk_ui.cpp)
 add_test(NAME disk_ui COMMAND disk_ui_tests)
-add_executable(usb_disk_tests usb_disk_tests.cpp ${runtime}/usb.cpp ${runtime}/protocol.cpp ${runtime}/fat_disk.cpp)
+add_executable(usb_disk_tests usb_disk_tests.cpp ${runtime}/usb.cpp ${runtime}/protocol.cpp ${runtime}/gamepad.cpp ${runtime}/fat_disk.cpp)
 target_include_directories(usb_disk_tests BEFORE PRIVATE ${CMAKE_CURRENT_LIST_DIR}/usb_stubs)
 add_test(NAME usb_disk COMMAND usb_disk_tests)
-add_executable(storage_tests storage_tests.cpp ${runtime}/storage.cpp ${runtime}/hid_gamepad.cpp ${runtime}/fat_disk.cpp
+add_executable(storage_tests storage_tests.cpp ${runtime}/storage.cpp ${runtime}/gamepad.cpp ${runtime}/fat_disk.cpp
   ${runtime}/rom_store.cpp ${runtime}/menu.cpp
   ${upstream}/drivers/fatfs/ff.c ${upstream}/drivers/fatfs/ffunicode.c
   ${root}/lib/littlefs/lfs.c ${root}/lib/littlefs/lfs_util.c

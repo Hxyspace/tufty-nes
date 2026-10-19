@@ -69,9 +69,9 @@ python tools/serial_gamepad.py
 python tools/serial_gamepad.py --port COM7 --controller-id 1
 ```
 
-设备 `padid` 必须与发送器的 `--controller-id` 相同。默认使用 TGP v2 提供 NES 八键；旧版五键发送器可用 `--v1`，仅支持方向和 NES A。
+设备 `padid` 必须与发送器的 `--controller-id` 相同。串口仅使用 TGP v3，与 BLE 共用十字节按键 Report；固件和脚本需要一起更新，旧版 v1/v2 发送器不再支持。
 
-发送器只在运行脚本的终端窗口处于前台时接收按键；切到其他窗口会自动释放全部按键，串口连接继续保持。Windows Terminal 请在前台启动脚本，建议使用独立窗口。Ctrl+C 释放按键并退出。完整键位见 [README](../README.md#操作)。`--buttons` 固定按键测试不受窗口焦点影响。
+发送器只在运行脚本的终端窗口处于前台时接收按键；切到其他窗口会自动释放全部按键和 Home，串口连接继续保持。Windows Terminal 请在前台启动脚本，建议使用独立窗口。Esc 按下/松开发送 Home 状态；Ctrl+C 释放输入、发送关闭 Report 并退出。完整键位见 [README](../README.md#操作)。`--buttons` 固定按键测试不受窗口焦点影响，参数仍为 NES 八键位图，脚本会转换为 Report。
 
 Linux 暂只支持发送固定按键状态：
 

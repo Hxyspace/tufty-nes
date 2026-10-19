@@ -1,7 +1,7 @@
 // Production BLE adapter and real BTstack HID parser, with radio/HIDS endpoints
 // mocked at their public APIs. No controller or hardware is needed.
 #include "ble.hpp"
-#include "hid_gamepad.hpp"
+#include "gamepad.hpp"
 #include "storage.hpp"
 #include "btstack.h"
 #include "pico/stdlib.h"
@@ -149,17 +149,17 @@ int main(int argc,char **argv) {
         ble::init(); assert(inits==1 && on==1);
         if(!std::strcmp(argv[1],"left_stick")) {
             event({BTSTACK_EVENT_STATE,1,HCI_STATE_WORKING}); advertise(); linked(); ready();
-            sample({80,128,128,128,255,1,0,0,0,0}); assert(ble::buttons()==(tgp::Left|tgp::A));
-            sample({90,128,128,128,255,0,0,0,0,0}); assert(ble::buttons()==tgp::Left);
+            sample({80,128,128,128,255,1,0,0,0,0}); assert(ble::buttons()==(gamepad::Left|gamepad::A));
+            sample({90,128,128,128,255,0,0,0,0,0}); assert(ble::buttons()==gamepad::Left);
             sample({96,128,128,128,255,0,0,0,0,0}); assert(!ble::buttons());
             sample({95,128,128,128,255,0,0,0,0,0}); assert(!ble::buttons());
-            sample({176,128,128,128,255,0,0,0,0,0}); assert(ble::buttons()==tgp::Right);
-            sample({165,128,128,128,255,0,0,0,0,0}); assert(ble::buttons()==tgp::Right);
+            sample({176,128,128,128,255,0,0,0,0,0}); assert(ble::buttons()==gamepad::Right);
+            sample({165,128,128,128,255,0,0,0,0,0}); assert(ble::buttons()==gamepad::Right);
             sample({160,128,128,128,255,0,0,0,0,0}); assert(!ble::buttons());
-            sample({0,0,128,128,255,0,0,0,0,0}); assert(ble::buttons()==(tgp::Left|tgp::Up));
-            sample({0,0,128,128,4,0,0,0,0,0}); assert(ble::buttons()==tgp::Down); // D-pad wins.
+            sample({0,0,128,128,255,0,0,0,0,0}); assert(ble::buttons()==(gamepad::Left|gamepad::Up));
+            sample({0,0,128,128,4,0,0,0,0,0}); assert(ble::buttons()==gamepad::Down); // D-pad wins.
             sample({128,128,0,255,255,0,0,0,0,0}); assert(!ble::buttons()); // Right stick is unassigned.
-            sample({80,128,128,128,255,0,0,0,0,0}); assert(ble::buttons()==tgp::Left);
+            sample({80,128,128,128,255,0,0,0,0,0}); assert(ble::buttons()==gamepad::Left);
             disconnected(); advance(1000); advertise(); linked(); ready();
             sample({90,128,128,128,255,0,0,0,0,0}); assert(!ble::buttons()); // No stale hysteresis.
             ble::shutdown(); return 0;
@@ -171,7 +171,7 @@ int main(int argc,char **argv) {
             advance(1); assert(ble::home() && !ble::buttons());
             unsigned fired_activity=activity; advance(10000); assert(activity==fired_activity);
             report(255,1,0x20); assert(ble::home() && !ble::buttons()); // Release both to clear latch.
-            report(255); assert(!ble::home()); report(255,1); assert(ble::buttons()==tgp::A);
+            report(255); assert(!ble::home()); report(255,1); assert(ble::buttons()==gamepad::A);
             report(255,0,0x60); advance(1000); report(255); advance(1000); assert(!ble::home());
             report(255,0,0x20); advance(2000); assert(!ble::home()); // One click is insufficient.
             report(0,0,0x60); advance(2000); assert(!ble::home()); // D-pad pressed.
@@ -189,10 +189,10 @@ int main(int argc,char **argv) {
             assert(!disconnects && !off); ble::shutdown(); return 0;
         }
         if(!std::strcmp(argv[1],"remote_close")) {
-            assert(hidpad::disconnect_report(hidpad::DisconnectReport,10));
-            assert(!hidpad::disconnect_report(hidpad::DisconnectReport,9));
-            uint8_t near[10]; std::memcpy(near,hidpad::DisconnectReport,10); near[9]=0;
-            assert(!hidpad::disconnect_report(near,10));
+            assert(gamepad::disconnect_report(gamepad::DisconnectReport,10));
+            assert(!gamepad::disconnect_report(gamepad::DisconnectReport,9));
+            uint8_t near[10]; std::memcpy(near,gamepad::DisconnectReport,10); near[9]=0;
+            assert(!gamepad::disconnect_report(near,10));
             event({BTSTACK_EVENT_STATE,1,HCI_STATE_WORKING}); advertise(); linked(); ready();
             report(2,1,0x10); assert(ble::buttons() && ble::home());
             sample({0x54,0x47,0x50,0x01,0x42,0x59,0x45,0,0,0xa5});
@@ -200,7 +200,7 @@ int main(int argc,char **argv) {
             report(0,1); assert(!ble::buttons()); // Drop already queued input after the close request.
             ble::poll(); assert(disconnects==1 && !off && storage::config.ble_enabled && !usb::dirty);
             disconnected(); advance(1000); assert(scans==2 && on==1);
-            advertise(); linked(); ready(); report(2,1); assert(ble::buttons()==(tgp::Right|tgp::A));
+            advertise(); linked(); ready(); report(2,1); assert(ble::buttons()==(gamepad::Right|gamepad::A));
             sample({0x54,0x47,0x50,0x01,0x42,0x59,0x45,0,0}); // Truncated control packet cannot close.
             ble::poll(); assert(disconnects==1);
             sync_disconnect=true;
@@ -215,16 +215,16 @@ int main(int argc,char **argv) {
             event({BTSTACK_EVENT_STATE,1,HCI_STATE_WORKING}); advertise(0x1812,0); linked(); ready();
             assert(reads==1 && last_read_id==4 && !disconnects);
             report(0xa2,1,0x10); // High hat nibble is padding; low nibble means right.
-            assert(ble::buttons()==(tgp::Right|tgp::A) && ble::home());
+            assert(ble::buttons()==(gamepad::Right|gamepad::A) && ble::home());
             // Consumer-control report 3 must neither become keys nor release them.
             hid({HCI_EVENT_GATTSERVICE_META,10,GATTSERVICE_SUBEVENT_HID_REPORT,7,0,0,3,3,0,3,0,0});
-            assert(ble::buttons()==(tgp::Right|tgp::A) && ble::home());
+            assert(ble::buttons()==(gamepad::Right|gamepad::A) && ble::home());
             // The old Android nine-byte report no longer matches this protocol.
             hid({HCI_EVENT_GATTSERVICE_META,17,GATTSERVICE_SUBEVENT_HID_REPORT,7,0,0,4,10,0,
                  4,128,128,128,128,2,1,0,0,0});
             assert(!ble::buttons() && !ble::home());
             for(unsigned null:{8,15,255}) {report(null); assert(!ble::buttons());}
-            report(0,2,0x0c); assert(ble::buttons()==(tgp::Up|tgp::B|tgp::Select|tgp::Start));
+            report(0,2,0x0c); assert(ble::buttons()==(gamepad::Up|gamepad::B|gamepad::Select|gamepad::Start));
             disconnected(); advance(1000);
             // A descriptor with shifted buttons has the same rounded byte size
             // and hat offset, but cannot safely use the fixed XTARK byte offsets.
@@ -248,7 +248,7 @@ int main(int argc,char **argv) {
             ready(ERROR_CODE_UNSPECIFIED_ERROR); assert(disconnects==2);
             disconnected(); advance(1000);
             advertise(0x1812,0,0xac); linked(); pairing(0,0); ready(); report(2,1);
-            assert(disconnects==2 && ble::buttons()==(tgp::Right|tgp::A));
+            assert(disconnects==2 && ble::buttons()==(gamepad::Right|gamepad::A));
             ble::shutdown(); return 0;
         }
         if(!std::strcmp(argv[1],"idle_link")) {
@@ -257,7 +257,7 @@ int main(int argc,char **argv) {
             report(2,1,0x10); unsigned held_activity=activity;
             // Simulated notification silence must not expire a held HID state.
             for(unsigned i=0;i<600;++i) advance(1000);
-            assert(ble::buttons()==(tgp::Right|tgp::A) && ble::home() && activity==held_activity);
+            assert(ble::buttons()==(gamepad::Right|gamepad::A) && ble::home() && activity==held_activity);
             assert(!disconnects && !off && scans==1 && reads==1);
             report(255); unsigned idle_activity=activity;
             // No app-close or service-loss probe runs after HID is READY.
@@ -267,12 +267,12 @@ int main(int argc,char **argv) {
             report(0,2,0x10);
             // A disconnection for another handle cannot release this controller.
             event({HCI_EVENT_DISCONNECTION_COMPLETE,4,0,0x41,0,0x13});
-            assert(ble::buttons()==(tgp::Up|tgp::B) && ble::home());
+            assert(ble::buttons()==(gamepad::Up|gamepad::B) && ble::home());
             disconnected(); assert(!ble::buttons() && !ble::home());
             advance(1000); assert(scans==2 && !off);
             // Actual link loss still reconnects, including a new random address.
             advertise(0x1812,1,0xab); linked(); ready(); assert(reads==2);
-            report(2,1); assert(ble::buttons()==(tgp::Right|tgp::A));
+            report(2,1); assert(ble::buttons()==(gamepad::Right|gamepad::A));
             ble::command("ble status"); ble::shutdown(); return 0;
         }
         if(!std::strcmp(argv[1],"disconnect_timeout")) {
@@ -283,7 +283,7 @@ int main(int argc,char **argv) {
             advance(10000); assert(off==1);
             finish_restart();
             advertise(0x1812,1,0xab); linked(); ready(); report(0,2);
-            assert(ble::buttons()==(tgp::Up|tgp::B));
+            assert(ble::buttons()==(gamepad::Up|gamepad::B));
             ble::shutdown(); return 0;
         }
         if(!std::strcmp(argv[1],"scan_uuid")) {
@@ -292,13 +292,13 @@ int main(int argc,char **argv) {
             advertise(); assert(!connects);
             advertise(0x180f); assert(connects==1);
             ble::command("ble trace on"); linked(); ready(); report(2,1);
-            assert(ble::buttons()==(tgp::Right|tgp::A));
+            assert(ble::buttons()==(gamepad::Right|gamepad::A));
             disconnected(); advance(1000);
             ble::command("ble target AA:BB:CC:DD:EE:FF public"); ble::poll();
             advertise(0x1812,1); assert(connects==1); // Wrong address type.
             advertise(0x1812,0,0xab); assert(connects==1); // Wrong address.
             advertise(0x1812,0); assert(connects==2); // MAC bypasses scan UUID.
-            linked(); ready(); report(0,1); assert(ble::buttons()==(tgp::Up|tgp::A));
+            linked(); ready(); report(0,1); assert(ble::buttons()==(gamepad::Up|gamepad::A));
             ble::command("ble trace off"); ble::shutdown(); return 0;
         }
         if(!std::strcmp(argv[1],"home")) {
@@ -311,7 +311,7 @@ int main(int argc,char **argv) {
             advertise(); linked(); ready();
             report(255,0,0x10); assert(ble::home() && !ble::buttons() && activity==2);
             advance(60000); assert(ble::home()); // No heartbeat required even for Home.
-            report(1,3,0x1c); assert(ble::home() && ble::buttons()==(tgp::Up|tgp::Right|15));
+            report(1,3,0x1c); assert(ble::home() && ble::buttons()==(gamepad::Up|gamepad::Right|15));
             // An unrelated report must not release Home; malformed selected input must.
             hid({HCI_EVENT_GATTSERVICE_META,5,GATTSERVICE_SUBEVENT_HID_REPORT,7,0,0,2});
             assert(ble::home());
@@ -324,7 +324,7 @@ int main(int argc,char **argv) {
             report(255,0,0x10); disconnected(); assert(!ble::home()); advance(1000);
             // A controller that sends no Home bit remains a normal eight-key pad.
             advertise(); linked(); ready(); report(255,0,0x0c);
-            assert(!ble::home() && ble::buttons()==(tgp::Select|tgp::Start));
+            assert(!ble::home() && ble::buttons()==(gamepad::Select|gamepad::Start));
             // Other physical function bits (L2/R2/L3/R3) must not return to menu.
             report(255,0,0x63); assert(!ble::home() && !ble::buttons());
             disconnected(); advance(1000); advertise(); linked(); ready();
@@ -390,16 +390,16 @@ int main(int argc,char **argv) {
                 event({BTSTACK_EVENT_STATE,1,HCI_STATE_WORKING}); assert(scans==2);
             }
             advertise(); linked(); ready(); assert(reads);
-            report(2,1); assert(ble::buttons()==(tgp::Right|tgp::A));
+            report(2,1); assert(ble::buttons()==(gamepad::Right|gamepad::A));
         }
         ble::command("ble status"); ble::shutdown(); return 0;
     }
     // Exact protocol lengths, diagonal hats, eight buttons and reserved bits.
-    hidpad::Receiver receiver;
+    gamepad::Receiver receiver;
     uint8_t data[]={128,128,128,128,15,0,0,0,0,0};
     assert(receiver.receive(data,10) && !receiver.buttons);
-    constexpr uint8_t hats[]={tgp::Up,tgp::Up|tgp::Right,tgp::Right,tgp::Down|tgp::Right,
-        tgp::Down,tgp::Down|tgp::Left,tgp::Left,tgp::Up|tgp::Left};
+    constexpr uint8_t hats[]={gamepad::Up,gamepad::Up|gamepad::Right,gamepad::Right,gamepad::Down|gamepad::Right,
+        gamepad::Down,gamepad::Down|gamepad::Left,gamepad::Left,gamepad::Up|gamepad::Left};
     for(unsigned h=0;h<8;++h) {
         data[4]=h; data[5]=3; data[6]=12;
         assert(receiver.receive(data,10) && receiver.buttons==(hats[h]|15));
@@ -413,14 +413,14 @@ int main(int argc,char **argv) {
     }
     assert(!receiver.receive(nullptr,10));
     uint8_t address[6];
-    assert(hidpad::address("Aa:BB:cc:DD:ee:FF",address) && address[0]==0xaa && address[5]==0xff);
+    assert(gamepad::address("Aa:BB:cc:DD:ee:FF",address) && address[0]==0xaa && address[5]==0xff);
     for(const char *s:{"","AA:BB:CC:DD:EE:FG","AA:BB:CC:DD:EE:FFx","AA-BB:CC:DD:EE:FF"})
-        assert(!hidpad::address(s,address));
+        assert(!gamepad::address(s,address));
     uint16_t uuid=0;
-    assert(hidpad::uuid16("0x1812",uuid) && uuid==0x1812);
-    assert(hidpad::uuid16("0XABcd",uuid) && uuid==0xabcd);
+    assert(gamepad::uuid16("0x1812",uuid) && uuid==0x1812);
+    assert(gamepad::uuid16("0XABcd",uuid) && uuid==0xabcd);
     for(const char *s:{"","1812","0x181","0x1812x","0xG812","0x0000"})
-        assert(!hidpad::uuid16(s,uuid));
+        assert(!gamepad::uuid16(s,uuid));
 
     disk=true; ble::init(); ble::poll(); assert(!inits && !polls);
     disk=false; storage::config.ble_enabled=false; ble::init(); assert(!inits);
@@ -430,10 +430,10 @@ int main(int argc,char **argv) {
     advertise(0x180f); assert(!connects); // Ignore battery-only peripherals.
     advertise(); assert(connects==1 && connected_type==BD_ADDR_TYPE_LE_RANDOM && connected_peer[0]==0xaa);
     linked(); ready(); assert(reads==1);
-    report(1,3,12); assert(ble::buttons()==(tgp::Up|tgp::Right|15) && activity==1);
+    report(1,3,12); assert(ble::buttons()==(gamepad::Up|gamepad::Right|15) && activity==1);
     advance(2000); assert(ble::buttons()); // Change-only HID must retain held keys.
     report(255); assert(!ble::buttons() && activity==1); // Neutral heartbeat is not activity.
-    report(2,1); assert(ble::buttons()==(tgp::Right|tgp::A));
+    report(2,1); assert(ble::buttons()==(gamepad::Right|gamepad::A));
     // Truncated selected report releases keys, unrelated report IDs do not.
     hid({HCI_EVENT_GATTSERVICE_META,5,GATTSERVICE_SUBEVENT_HID_REPORT,7,0,0,4}); assert(!ble::buttons());
     report(2,1);

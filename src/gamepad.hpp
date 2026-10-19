@@ -1,12 +1,12 @@
 #pragma once
-#include "protocol.hpp"
 #include <cstddef>
 #include <cstdint>
 
-namespace hidpad {
-// Physical XTARK input report, without the GATT Report Reference's Report ID.
+namespace gamepad {
+enum Button : uint8_t { A=1, B=2, Select=4, Start=8, Up=16, Down=32, Left=64, Right=128 };
+// Shared XTARK input payload for BLE and CDC1, without a Report ID prefix.
 constexpr size_t ReportBytes=10;
-// Application control message carried by report 4, never a gamepad state.
+// End the originating controller session; never interpret this as button state.
 constexpr uint8_t DisconnectReport[ReportBytes]={0x54,0x47,0x50,0x01,0x42,0x59,0x45,0,0,0xa5};
 bool disconnect_report(const uint8_t *data,size_t bytes);
 bool decode(const uint8_t *data,size_t bytes,uint8_t &buttons);

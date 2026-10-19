@@ -1,7 +1,7 @@
-#include "hid_gamepad.hpp"
+#include "gamepad.hpp"
 #include <cstring>
 
-namespace hidpad {
+namespace gamepad {
 namespace {
 int hex(char c) {
     if(c>='0' && c<='9') return c-'0';
@@ -28,8 +28,8 @@ bool decode(const uint8_t *data,size_t bytes,uint8_t &buttons) {
     // Hat is a four-bit absolute field with Null State; upper bits are padding.
     // Values outside its logical range 0..7 indicate no direction.
     uint8_t hat=data[4]&0x0f;
-    constexpr uint8_t hats[]={tgp::Up,tgp::Up|tgp::Right,tgp::Right,tgp::Right|tgp::Down,
-        tgp::Down,tgp::Down|tgp::Left,tgp::Left,tgp::Left|tgp::Up};
+    constexpr uint8_t hats[]={gamepad::Up,gamepad::Up|gamepad::Right,gamepad::Right,gamepad::Right|gamepad::Down,
+        gamepad::Down,gamepad::Down|gamepad::Left,gamepad::Left,gamepad::Left|gamepad::Up};
     buttons=(data[5]&3)|(data[6]&12)|(hat<8?hats[hat]:0);
     return true;
 }
@@ -37,10 +37,10 @@ bool Receiver::receive(const uint8_t *data,size_t bytes,uint32_t now) {
     if(!decode(data,bytes,buttons)) {release(); ++rejected; return false;}
     stick_x=axis(data[0],stick_x); stick_y=axis(data[1],stick_y);
     if((data[4]&15)>=8) { // A pressed D-pad overrides the whole stick direction.
-        if(stick_x<0) buttons|=tgp::Left;
-        if(stick_x>0) buttons|=tgp::Right;
-        if(stick_y<0) buttons|=tgp::Up;
-        if(stick_y>0) buttons|=tgp::Down;
+        if(stick_x<0) buttons|=gamepad::Left;
+        if(stick_x>0) buttons|=gamepad::Right;
+        if(stick_y<0) buttons|=gamepad::Up;
+        if(stick_y>0) buttons|=gamepad::Down;
     }
     if(!(data[6]&0x60)) combo_latched=false; // Release both clicks to re-arm.
     bool candidate=data[5]==0 && data[6]==0x60 && (data[4]&15)>=8 &&

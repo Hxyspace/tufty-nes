@@ -2,7 +2,7 @@
 #include "fat_disk.hpp"
 #include "rom_store.hpp"
 #include "display.hpp"
-#include "hid_gamepad.hpp"
+#include "gamepad.hpp"
 #include "ff.h"
 #include "lfs.h"
 #include "cJSON.h"
@@ -94,8 +94,8 @@ static void load_config() {
        (swap && !cJSON_IsBool(swap)) || (last && (!cJSON_IsString(last) || std::strlen(last->valuestring)>255)) ||
        (idle && (!cJSON_IsNumber(idle) || idle->valuedouble!=idle->valueint || idle->valueint<0 || idle->valueint>86400)) ||
        (ble && !cJSON_IsBool(ble)) || (random && !cJSON_IsBool(random)) ||
-       (uuid && (!cJSON_IsString(uuid) || !hidpad::uuid16(uuid->valuestring,scan_uuid))) ||
-       (peer && (!cJSON_IsString(peer) || (peer->valuestring[0] && !hidpad::address(peer->valuestring,address))))) {
+       (uuid && (!cJSON_IsString(uuid) || !gamepad::uuid16(uuid->valuestring,scan_uuid))) ||
+       (peer && (!cJSON_IsString(peer) || (peer->valuestring[0] && !gamepad::address(peer->valuestring,address))))) {
         writable_config=false; cJSON_Delete(root); return;
     }
     if(id) config.controller=id->valueint;
@@ -133,8 +133,8 @@ static void load_gamepad_config() {
     bool valid=cJSON_IsObject(root) &&
         (!id || (cJSON_IsNumber(id) && id->valuedouble==id->valueint && id->valueint>=1 && id->valueint<=65535)) &&
         (!ble || cJSON_IsBool(ble)) && (!random || cJSON_IsBool(random)) &&
-        (!uuid || (cJSON_IsString(uuid) && hidpad::uuid16(uuid->valuestring,scan_uuid))) &&
-        (!peer || (cJSON_IsString(peer) && (!peer->valuestring[0] || hidpad::address(peer->valuestring,address))));
+        (!uuid || (cJSON_IsString(uuid) && gamepad::uuid16(uuid->valuestring,scan_uuid))) &&
+        (!peer || (cJSON_IsString(peer) && (!peer->valuestring[0] || gamepad::address(peer->valuestring,address))));
     if(valid) {
         if(id) config.controller=id->valueint;
         if(ble) config.ble_enabled=cJSON_IsTrue(ble);
