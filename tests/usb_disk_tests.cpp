@@ -86,6 +86,7 @@ void activity() {}
 namespace ble {bool command(const char *) {return false;}}
 namespace controllers {bool command(const char *) {return false;} void set_controller_id(uint16_t) {}}
 namespace display {
+Stats stats() {return {};}
 static uint16_t buffers[2][1];
 uint16_t *menu_buffers[]={buffers[0],buffers[1]};
 void brightness(uint8_t) {}

@@ -16,19 +16,20 @@
 void tufty_service();
 namespace display {
 static uint16_t __uninitialized_psram("menu") menus[2][width*height];
-static uint8_t __uninitialized_psram("frames") games[2][256*height];
+static GameFrame __uninitialized_psram("frames") games[2];
 uint16_t *menu_buffers[2]={menus[0],menus[1]};
 uint16_t palette[64]{};
 static std::atomic<unsigned> requested{1}, completed{0};
 static std::atomic<bool> ready{false}, pause_request{false}, pause_ack{false};
 static std::atomic<bool> disk_hold{false};
+static std::atomic<uint32_t> sent{0},dropped{0},last_us{0},worst_us{0},transfer_us{0};
 static PIO pio=pio1;
 static uint sm, dma;
 // Only core0 publishes brightness. Keep the panel dark until its first UI frame.
 static uint8_t desired_brightness=0;
 static bool visible=false;
 alignas(4) static uint16_t columns[2][height];
-static void frame(unsigned id);
+static void __no_inline_not_in_flash_func(frame)(unsigned id);
 void early_init() {
     gpio_init(TFT_LED_PIN); gpio_put(TFT_LED_PIN,0); gpio_set_dir(TFT_LED_PIN,GPIO_OUT);
 }
@@ -98,34 +99,42 @@ static void init_panel() {
     // before DISPON, as the native driver does, with the backlight still off.
     frame(1); command(0x29);
 }
-static void frame(unsigned id) {
+// Flash instructions and PSRAM data share QMI. Keep the conversion loop in
+// SRAM, even when the compiler would otherwise inline it into the core loop.
+static void __no_inline_not_in_flash_func(frame)(unsigned id) {
+    const auto started=time_us_32();
     uint8_t cmd=0x2c;
     gpio_put(TFT_DC_PIN,0); gpio_put(TFT_CS_PIN,0); write(&cmd,1); gpio_put(TFT_DC_PIN,1);
+    const auto transfer_started=time_us_32();
     for(int x=0;x<width;++x) {
         uint16_t *col=columns[x&1];
         for(int y=0;y<height;++y) {
             uint16_t pixel=id<=2 ? menus[id-1][y*width+x] :
-                x>=32 && x<288 ? palette[games[id-3][y*256+x-32]&63] : 0;
+                x>=32 && x<288 ? palette[games[id-3].colors[x-32][y]] : 0;
             col[y]=__builtin_bswap16(pixel);
         }
         idle(); dma_channel_set_trans_count(dma,height*2,false); dma_channel_set_read_addr(dma,col,true);
     }
     idle(); gpio_put(TFT_CS_PIN,1);
+    transfer_us.store(time_us_32()-transfer_started,std::memory_order_relaxed);
+    const uint32_t elapsed=time_us_32()-started;
+    last_us.store(elapsed,std::memory_order_relaxed);
+    if(elapsed>worst_us.load(std::memory_order_relaxed)) worst_us.store(elapsed,std::memory_order_relaxed);
+    sent.fetch_add(1,std::memory_order_relaxed);
 }
 static void core() {
     flash_safe_execute_core_init();
     init_panel(); ready.store(true,std::memory_order_release);
-    uint32_t previous=0;
     while(true) {
         if(pause_request.load(std::memory_order_acquire)) {
             pause_ack.store(true,std::memory_order_release);
             while(pause_request.load(std::memory_order_acquire)) tight_loop_contents();
             pause_ack.store(false,std::memory_order_release);
         }
-        uint32_t now=time_us_32();
-        if(!disk_hold.load(std::memory_order_acquire) && now-previous>=16667) {
-            previous=now;
-            unsigned id=requested.load(std::memory_order_acquire);
+        unsigned id=requested.load(std::memory_order_acquire);
+        // A completed frame remains in LCD GRAM. Only a new publication needs
+        // another transfer; repeating it would contend with the emulator's QMI.
+        if(!disk_hold.load(std::memory_order_acquire) && completed.load(std::memory_order_relaxed)!=id) {
             frame(id); completed.store(id,std::memory_order_release);
         }
         tight_loop_contents();
@@ -152,11 +161,14 @@ void present_disk(unsigned index) {
     requested.store(1+(index&1),std::memory_order_release);
     if(!visible) {visible=true; set_backlight(desired_brightness);}
 }
-void present_game(const uint8_t *screen) {
+void present_game(const GameFrame &screen) {
     unsigned old=requested.load(std::memory_order_acquire);
-    if(completed.load(std::memory_order_acquire)!=old) return;
+    if(completed.load(std::memory_order_acquire)!=old) {
+        dropped.fetch_add(1,std::memory_order_relaxed);
+        return;
+    }
     unsigned index=old==3?1:0;
-    std::memcpy(games[index],screen,256*height);
+    std::memcpy(&games[index],&screen,sizeof screen);
     requested.store(3+index,std::memory_order_release);
 }
 void pause(bool enabled) {
@@ -164,6 +176,12 @@ void pause(bool enabled) {
     while(pause_ack.load(std::memory_order_acquire)!=enabled) tight_loop_contents();
 }
 bool paused() {return pause_ack.load(std::memory_order_acquire);}
+Stats stats() {
+    // This driver does not wait for TE. Keep the shared diagnostic fields explicit.
+    return {sent.load(std::memory_order_relaxed),dropped.load(std::memory_order_relaxed),
+        last_us.load(std::memory_order_relaxed),worst_us.load(std::memory_order_relaxed),
+        0,false,transfer_us.load(std::memory_order_relaxed)};
+}
 void prepare_reboot() {
     visible=false;
     if(!ready.load(std::memory_order_acquire)) {early_init(); return;}

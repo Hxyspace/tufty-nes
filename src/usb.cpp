@@ -6,6 +6,7 @@
 #include "power.hpp"
 #include "ble.hpp"
 #include "controllers.hpp"
+#include "diagnostics.hpp"
 #include "disk_ui.hpp"
 #include "disk_activity.hpp"
 #include "hardware/watchdog.h"
@@ -138,7 +139,7 @@ static void command(const char *s) {
     }
     if(power::command(s) || controllers::command(s) || ble::command(s)) return;
     if(!std::strcmp(s,"help")) {
-        std::printf("help | status | usb disk | bootsel | rescan | save | brightness 1..100 | padid 1..65535 | swapab 0/1\n"
+        std::printf("help | status | nes stats | usb disk | bootsel | rescan | save | brightness 1..100 | padid 1..65535 | swapab 0/1\n"
                     "power status | power sleep [seconds] | power idle 0..86400\n"
                     "pad status | serial on|off | ble status | ble on|off | ble scan\n"
                     "ble discover [stop] | ble devices | ble connect MAC public|random\n"
@@ -148,6 +149,21 @@ static void command(const char *s) {
         std::printf("FAT=%u sector=%u State=%u ROMs=%u pad=%u packets=%lu rejected=%lu dirty=%u\n",
             storage::mounted(),flashfat::disk.sector_size,storage::state_ready(),unsigned(storage::count),pad.active,
             static_cast<unsigned long>(pad.received),static_cast<unsigned long>(pad.rejected),dirty);
+    } else if(!std::strcmp(s,"nes stats")) {
+        const auto d=display::stats();
+        const auto rate=diagnostics::rate.sample();
+        std::printf("NES frames=%lu work_us=%lu max_work_us=%lu max_poll_gap_us=%lu\n"
+                    "NES fps=%lu.%02lu window_frames=%lu window_ms=%llu publish_us=%lu max_publish_us=%lu service_us=%lu max_usb_us=%lu max_ble_us=%lu\n"
+                    "LCD frames=%lu drops=%lu frame_us=%lu max_frame_us=%lu TE=%u timeouts=%lu transfer_us=%lu\n",
+            (unsigned long)diagnostics::frames,(unsigned long)diagnostics::work_last_us,
+            (unsigned long)diagnostics::work_max_us,(unsigned long)diagnostics::service_gap_max_us,
+            (unsigned long)(rate.fps_x100/100),(unsigned long)(rate.fps_x100%100),
+            (unsigned long)rate.frames,(unsigned long long)(rate.elapsed_us/1000),
+            (unsigned long)diagnostics::publish_last_us,(unsigned long)diagnostics::publish_max_us,
+            (unsigned long)diagnostics::service_last_us,(unsigned long)diagnostics::usb_max_us,
+            (unsigned long)diagnostics::ble_max_us,
+            (unsigned long)d.frames,(unsigned long)d.dropped,(unsigned long)d.last_us,
+            (unsigned long)d.worst_us,d.te_enabled,(unsigned long)d.te_timeouts,(unsigned long)d.transfer_us);
     } else if(!std::strcmp(s,"usb disk")) {
         disk_requested=true; std::printf("USB DISK: REQUESTED\n");
     } else if(!std::strcmp(s,"bootsel")) {

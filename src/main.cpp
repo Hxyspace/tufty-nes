@@ -9,6 +9,7 @@
 #include "ble.hpp"
 #include "gamepad.hpp"
 #include "controllers.hpp"
+#include "diagnostics.hpp"
 #include "InfoNES.h"
 #include "InfoNES_System.h"
 #include "InfoNES_Mapper.h"
@@ -18,7 +19,8 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdarg>
-uint8_t SCREEN[240][256];
+// Build the working frame in internal SRAM; publish copies into PSRAM.
+static display::GameFrame screen;
 static uint16_t linebuffer[256];
 const BYTE NesPalette[64]={
     0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,
@@ -29,6 +31,7 @@ const BYTE NesPalette[64]={
 static const uint8_t *rom_data=nullptr;
 static size_t rom_bytes=0;
 static uint32_t frame_at=0;
+static uint32_t work_started=0;
 static bool usb_ready=false;
 static bool ble_ready=false;
 static void sample_local() {
@@ -41,9 +44,18 @@ void tufty_service() {
     uint32_t now=time_us_32();
     static bool servicing=false;
     if(usb_ready && !servicing && now-previous>=1000) {
+        if(diagnostics::playing && previous)
+            diagnostics::service_gap_max_us=std::max(diagnostics::service_gap_max_us,now-previous);
         servicing=true; previous=now; usb::poll();
+        const auto usb_done=time_us_32();
         if(ble_ready) ble::poll();
+        const auto ble_done=time_us_32();
         sample_local();
+        if(diagnostics::playing) {
+            diagnostics::usb_max_us=std::max(diagnostics::usb_max_us,usb_done-now);
+            diagnostics::ble_max_us=std::max(diagnostics::ble_max_us,ble_done-usb_done);
+            if(diagnostics::working) diagnostics::service_work_us+=time_us_32()-now;
+        }
         servicing=false;
     }
 }
@@ -86,15 +98,30 @@ void InfoNES_SoundClose() {}
 int InfoNES_GetSoundBufferSize() {return 1470;}
 void InfoNES_SoundOutput(int,const BYTE *,const BYTE *,const BYTE *,const BYTE *,const BYTE *) {}
 void InfoNES_PreDrawLine(int) {InfoNES_SetLineBuffer(linebuffer,256);}
-void InfoNES_PostDrawLine(int line) {
+void __no_inline_not_in_flash_func(InfoNES_PostDrawLine)(int line) {
     if(line<0 || line>=240) return;
-    for(int x=0;x<256;++x) SCREEN[line][x]=linebuffer[x]&63;
+    screen.line(line,linebuffer);
 }
 int InfoNES_LoadFrame() {
-    display::present_game(&SCREEN[0][0]);
+    const auto publish_started=time_us_32();
+    diagnostics::rate.frame(publish_started);
+    display::present_game(screen);
+    diagnostics::publish_last_us=time_us_32()-publish_started;
+    diagnostics::publish_max_us=std::max(diagnostics::publish_max_us,diagnostics::publish_last_us);
+    // The first frame includes core initialization, so exclude it from work timing.
+    if(diagnostics::frames) {
+        diagnostics::work_last_us=time_us_32()-work_started;
+        diagnostics::work_max_us=std::max(diagnostics::work_max_us,diagnostics::work_last_us);
+    }
+    diagnostics::service_last_us=diagnostics::service_work_us;
+    diagnostics::working=false;
+    ++diagnostics::frames;
     uint32_t target=frame_at+16667;
     while(static_cast<int32_t>(time_us_32()-target)<0) {tufty_service(); tight_loop_contents();}
     frame_at=time_us_32();
+    work_started=time_us_32();
+    diagnostics::service_work_us=0;
+    diagnostics::working=true;
     return 0;
 }
 static void flush_config() {
@@ -164,7 +191,9 @@ int main() {
                     std::snprintf(storage::config.last_rom,sizeof(storage::config.last_rom),"%s",storage::entries[selected].name);
                     usb::dirty=storage::state_ready(); flush_config();
                 }
+                diagnostics::reset(); diagnostics::playing=true;
                 InfoNES_Main(true);
+                diagnostics::playing=false; diagnostics::working=false;
             }
             input::hub.clear_events();
             power::menu(true);
