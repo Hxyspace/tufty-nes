@@ -19,7 +19,7 @@
 | TGP 会话与菜单设计、背景 | `TUFTY_yuan/lib/tufty_runtime/gamepad/`、`office/apps/menu/`、`office/assets/background.png` | 原生重写；本项目 TGP v3 承载共用手柄 Report，背景来自该项目素材 |
 | Lato Regular/Heavy/Bold ASCII 字形 | Łukasz Dziedzic | 生成菜单位图，SIL OFL 1.1，见 `licenses/LATO-LICENSE` |
 
-`tools/rom_fixes.json` 记录从 [FCEUX ines-correct.h](https://github.com/TASEmulators/fceux/blob/master/src/ines-correct.h) 核对的部分 CRC32/mapper/镜像事实，未引入 FCEUX 程序代码或完整数据库。Rainbow Islands 规则增加了 PRG/CHR 数据的 SHA256 和长度约束。ROM 文件不随项目或固件分发。
+`tools/rom_fixes.json` 记录从 [FCEUX ines-correct.h](https://github.com/TASEmulators/fceux/blob/master/src/ines-correct.h) 核对的部分 CRC32/mapper/镜像事实，未引入 FCEUX 程序代码或完整数据库。Rainbow Islands 规则增加了 PRG/CHR 数据的 SHA256 和长度约束。仓库及默认固件不附带游戏 ROM；自定义完整文件系统镜像会包含 `resources/system/roms/` 中准备的游戏文件。
 
 BLE 使用 CYW43 驱动和 BlueKitchen BTstack，版本由 SDK gitlink 锁定；安全配对还使用 BTstack 随附的 micro-ecc。分发包包含 CYW43、BTstack 原始许可、Raspberry Pi 平台授权条款及 micro-ecc 许可；这些组件各自的许可适用范围以原文为准。
 

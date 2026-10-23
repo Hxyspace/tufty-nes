@@ -64,6 +64,53 @@ int main(int argc,char **argv) {
     assert(flash!=MAP_FAILED && reinterpret_cast<uintptr_t>(flash)==kXipBase);
     std::memset(flash,255,16*1024*1024);
     std::ifstream input(argv[1],std::ios::binary); assert(input);
+    if(argc==4 && std::string(argv[3])=="packed") {
+        input.read(reinterpret_cast<char *>(flash),16*1024*1024);
+        assert(input.gcount()==16*1024*1024);
+        storage::init(); assert(storage::mounted() && storage::state_ready());
+        assert(flashfat::disk.sector_size==4096);
+        const bool defaults=std::string(argv[2])=="defaults";
+        assert(storage::config.brightness==(defaults?80:63));
+        std::vector<uint8_t> background(320*200*2); size_t bytes=0;
+        assert(storage::read_file("/rom/nes-background.rgb565",background.data(),background.size(),bytes));
+        assert(bytes==background.size());
+        char text[32]{};
+        if(!defaults) {
+            assert(storage::read_file("/system/assets/test.txt",text,sizeof(text),bytes));
+            assert(std::string(text,bytes)=="system image test");
+            assert(storage::read_file("/state/nested/test.txt",text,sizeof(text),bytes));
+            assert(std::string(text,bytes)=="state image test");
+            for(const auto *prefix:{"/system/assets/","/state/"}) {
+                for(const auto *name:{"zeros.bin","erased.bin"}) {
+                    std::vector<uint8_t> content(8192);
+                    const auto path=std::string(prefix)+name;
+                    assert(storage::read_file(path.c_str(),content.data(),content.size(),bytes));
+                    assert(bytes==content.size());
+                    for(auto value:content) assert(value==(name[0]=='z'?0:255));
+                }
+            }
+        } else {
+            assert(!storage::read_file("/system/assets/test.txt",text,sizeof(text),bytes));
+            assert(!storage::read_file("/state/nested/test.txt",text,sizeof(text),bytes));
+        }
+        storage::scan(); assert(storage::count==(defaults?0u:1u));
+        if(!defaults) {
+            const uint8_t *data; size_t rom_bytes;
+            assert(storage::load(0,data,rom_bytes) && rom_bytes==16400);
+            ines::Image image; assert(ines::inspect(data,rom_bytes,image));
+        }
+        menu::load_art(); std::vector<uint16_t> frame(320*240);
+        menu::draw(frame.data(),0,0,300);
+        // Bottom-right is outside menu text/cards; verify the deployed ROMFS art.
+        assert(frame.back()==uint16_t(background[background.size()-2]|(background.back()<<8)));
+        std::vector<uint8_t> before(flash,flash+kState.offset);
+        assert(storage::save());
+        assert(std::memcmp(flash,before.data(),before.size())==0);
+        char saved[2048]{};
+        assert(storage::read_file("/state/nes.json",saved,sizeof(saved)-1,bytes));
+        assert(std::strstr(saved,defaults?"\"brightness\":80":"\"brightness\":63"));
+        munmap(flash,16*1024*1024); return 0;
+    }
     input.read(reinterpret_cast<char *>(flash+kSystem.offset),kSystem.bytes); assert(input.gcount()==kSystem.bytes);
     std::vector<uint8_t> original(flash,flash+16*1024*1024);
     std::string scenario=argc==4?argv[3]:"";

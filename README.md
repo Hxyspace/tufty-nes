@@ -26,7 +26,7 @@
 | 游戏格式 | iNES 1.0、部分 NES 2.0，最多 4 MiB/文件 |
 | PC 手柄工具 | Windows、Python 3、pyserial |
 
-设备需要预先具备兼容的 `/rom`、`/system`、`/state` 文件系统布局。本项目仅生成程序固件，不创建或格式化文件系统；布局与升级注意事项见 [存储说明](docs/storage.md)。
+构建提供程序、程序＋只读资源、程序＋全部文件系统三种固件。空白设备可刷入完整文件系统版初始化；布局与升级注意事项见 [存储说明](docs/storage.md)。
 
 尚不支持声音、第二玩家、游戏存档和 VS/PlayChoice。NES 2.0 支持范围见 [游戏文件要求](docs/usage.md#管理游戏)，游戏兼容性取决于 InfoNES 的 mapper 实现。BLE 当前支持 XTARK 十字节报告布局，其他 HID 手柄需单独适配。
 
@@ -36,11 +36,19 @@
 
 ```bash
 sudo apt install git python3 cmake ninja-build build-essential \
-  gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
+  gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib dosfstools mtools
 ./tools/build.sh
 ```
 
-首次构建会下载固定版本的依赖。生成的固件位于 `dist/tufty-nes-flash.uf2`。
+首次构建会下载固定版本的依赖，同时生成以下三种固件：
+
+| 文件 | 用途 |
+|---|---|
+| `dist/tufty-nes-flash.uf2` | 日常程序升级，保留资源、游戏和配置 |
+| `dist/tufty-nes-with-romfs.uf2` | 程序＋替换 `/rom` 只读资源，保留游戏和配置 |
+| `dist/tufty-nes-with-filesystem.uf2` | 初始化全部文件系统，**覆盖已有资源、游戏和配置** |
+
+三种固件均保留 SDK 的兼容块，A2 芯片的 State 注意事项见[升级说明](docs/storage.md#升级注意事项)。
 
 1. 让设备进入 BOOTSEL 模式；运行本固件时也可在 Console 输入 `bootsel`。
 2. 将 UF2 复制到出现的 RP2350 磁盘。
@@ -55,6 +63,8 @@ sudo apt install git python3 cmake ninja-build build-essential \
 3. 在电脑上安全弹出磁盘，设备会重启并显示游戏列表。
 
 建议使用 `01_Game.nes`、`02_Game.nes` 控制菜单顺序。仓库不提供游戏 ROM，请自行准备有权使用的游戏文件。
+
+也可在构建前把游戏放进 `resources/system/roms/`，随完整文件系统镜像部署。默认只包含空游戏目录，资源映射见 [资源说明](resources/README.md)。
 
 ## 操作
 

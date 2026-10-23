@@ -3,6 +3,10 @@
 /dist/
 /roms/*
 !/roms/README.md
+/resources/system/roms/*
+!/resources/system/roms/.gitkeep
+/resources/state/state/*
+!/resources/state/state/.gitkeep
 /.development/
 *.[nN][eE][sS]
 __pycache__/

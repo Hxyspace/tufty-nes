@@ -9,9 +9,19 @@
 | 固件 | `0x000000` | 2 MiB | 程序 |
 | `/rom` | `0x200000` | 1 MiB | RM1 只读资源 |
 | `/system` | `0x300000` | 12 MiB | FAT 卷、游戏和素材 |
-| `/state` | `0xf00000` | 1 MiB | LittleFS、应用配置 |
+| LittleFS 根 `/` | `0xf00000` | 1 MiB | 包含 `/state/` 配置目录 |
 
-刷入前，设备须已具有上述布局及有效文件系统。UF2 不包含文件系统镜像；固件不会自动分区或格式化。当前不提供空白设备的初始化工具。
+文件访问按 `/rom/`、`/system/`、`/state/` 前缀分发。`/state/nes.json` 是 LittleFS 卷内的完整路径，而非将卷根映射为 `/state`。
+
+构建提供三种镜像：
+
+- `tufty-nes-flash.uf2`：仅程序，用于设备已有有效文件系统时的日常升级。
+- `tufty-nes-with-romfs.uf2`：程序及替换整个 `/rom`，保留 `/system` 和 LittleFS。
+- `tufty-nes-with-filesystem.uf2`：程序及三个文件系统，用于初始化空白设备；**覆盖已有资源、游戏和配置**。
+
+资源源目录为 `resources/rom/`、`resources/system/`、`resources/state/`，详见[资源说明](../resources/README.md)。默认包含菜单背景、空 `roms/` 和空 `/state`，配置使用程序默认值。运行中的固件仍不自动格式化文件系统；完整镜像在电脑上生成有效文件系统后写入固定偏移。
+
+带资源的 UF2 省略未使用的擦除扇区，但会重新建立文件系统目录，不与设备上的旧文件合并。完整文件系统版刷入后，旧游戏和配置不再出现在新目录中；未使用扇区内的旧字节不保证清除。所有镜像均保留下文所述 SDK 兼容块。
 
 ## 游戏与 USB 磁盘
 

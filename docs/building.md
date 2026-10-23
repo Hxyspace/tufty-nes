@@ -7,24 +7,39 @@
 - Git、Python 3、CMake 3.21+、Ninja。
 - 宿主 C/C++ 编译器。
 - ARM GNU Toolchain，含 newlib 和 libstdc++。
+- dosfstools、mtools，用于生成 FAT 资源镜像。
 
 ```bash
 sudo apt install git python3 cmake ninja-build build-essential \
-  gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
+  gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib dosfstools mtools
 ./tools/build.sh
 ```
 
-首次构建需要访问 GitHub 下载依赖，以后可离线复用。脚本会构建宿主 picotool，再编译固件并检查 UF2 写入范围。
+首次构建需要访问 GitHub 下载依赖，以后可离线复用。脚本会构建宿主 picotool，再编译固件、生成文件系统镜像并校验各 UF2 的写入范围。构建和打包只操作本地文件，不自动刷机。
 
 ## 输出
 
 | 文件 | 用途 |
 |---|---|
-| `dist/tufty-nes-flash.uf2` | BOOTSEL 刷机文件 |
+| `dist/tufty-nes-flash.uf2` | 仅程序，日常升级保留资源和配置分区 |
+| `dist/tufty-nes-with-romfs.uf2` | 程序＋替换 `/rom`，保留 `/system` 和 LittleFS |
+| `dist/tufty-nes-with-filesystem.uf2` | 程序＋全部文件系统，初始化设备或恢复资源；覆盖游戏和配置 |
+| `dist/rom.bin`、`system.bin`、`state.bin` | 完整尺寸原始分区镜像，用于离线检查，不直接复制到 BOOTSEL |
+| `dist/resource-images.json` | 分区偏移、大小、实际写入扇区、哈希及镜像覆盖范围 |
 | `dist/tufty-nes-flash.elf` | 调试符号及 ELF 固件 |
 | `dist/build-info.json` | 源码提交、依赖版本、补丁及产物校验值 |
 
 发布目录同时包含用户文档和许可证。构建不需要游戏 ROM。
+
+## 资源镜像
+
+固定使用项目内的 `resources/rom/`、`resources/system/` 和 `resources/state/`，分别构建 RM1、FAT12 和 LittleFS；路径映射与内容准备见[资源说明](../resources/README.md)。默认只有菜单背景、空游戏目录和空配置目录，完整文件系统版可直接用于空白设备。游戏只从 `resources/system/roms/` 打包，不会自动引入仓库根目录的本地 `roms/`。
+
+RM1 与固件现有读取器兼容。FAT 卷为 12 MiB、4096 字节扇区，使用 dosfstools/mtools 生成。LittleFS 使用项目锁定的 C 库与主机编译器生成，参数与设备一致：256 字节读写、4096 字节块、256 块；无需额外 Python 文件系统依赖。
+
+资源 UF2 采用 sparse 打包，只包含文件系统元数据和实际占用的 4 KiB 擦除扇区；每个选中扇区完整写入 16 个 256 字节数据页。扇区范围根据 RM1 有效记录、FAT 分配表和 LittleFS 构建使用记录确定，全零或全 `0xFF` 文件内容同样保留。UF2 大小随资源量变化，分区容量不变；省略的空闲扇区不保证清除旧数据，不用于安全擦除。
+
+构建校验原始固件后合并资源块，重新编号并保留 SDK 单独的兼容块，再核对地址、数据、重复块及覆盖范围。程序＋ROMFS 版不会加入 `/system` 或 LittleFS 的普通数据块。各镜像都受[兼容块的芯片修订差异](storage.md#升级注意事项)影响。
 
 可配置的环境变量：
 
@@ -46,7 +61,7 @@ sudo apt install git python3 cmake ninja-build build-essential \
 ./flash_tufty.sh --flash
 ```
 
-该命令会重新构建、烧录、校验并重启设备。不带参数的 `./flash_tufty.sh` 只编译。项目自行构建的 picotool 不含 libusb，仅用于生成 UF2。
+该命令会重新构建三个镜像，但只烧录程序版 `tufty-nes-flash.uf2`，然后校验并重启设备。初始化时请手动选择完整文件系统 UF2。不带参数的 `./flash_tufty.sh` 只编译。项目自行构建的 picotool 不含 libusb，仅用于生成 UF2。
 
 ## 依赖与补丁
 
@@ -100,7 +115,7 @@ sudo apt install dosfstools mtools
 ./tools/test.sh
 ```
 
-主机测试覆盖串口协议、BLE 状态机和真实 BTstack HID 描述解析、Console、菜单休眠计时与休眠请求、USB 磁盘界面与传输状态、512/4096 字节 FAT、配置保存与错误处理、ROM 解析与修复、PPU 可见行与遮罩、mapper 48 图块寻址、UF2 检查，以及依赖补丁与本地修改保护。C/C++ 测试启用 ASan/UBSan，使用临时文件系统镜像和合成图块。无线连接、输入延迟、实际游戏画面、低功耗状态和物理唤醒需在设备上验证。
+主机测试覆盖串口协议、BLE 状态机和真实 BTstack HID 描述解析、Console、菜单休眠计时与休眠请求、USB 磁盘界面与传输状态、512/4096 字节 FAT、配置保存与错误处理、ROM 解析与修复、PPU 可见行与遮罩、mapper 48 图块寻址、UF2 检查，以及依赖补丁与本地修改保护。资源镜像测试会模拟空白和已有数据的 Flash，使用真实固件读取器挂载三个文件系统、加载游戏和背景、保存配置，并验证 ROMFS 更新保留其他分区。C/C++ 测试启用 ASan/UBSan，使用临时文件系统镜像和合成图块。无线连接、输入延迟、实际游戏画面、低功耗状态和物理唤醒需在设备上验证。
 
 ## 项目结构
 
@@ -114,6 +129,7 @@ tools/      依赖、构建、ROM 和 PC 手柄工具
 tests/      自动回归测试
 docs/       使用与开发文档
 licenses/   素材和参考实现的许可证
+resources/  构建用 ROMFS、System 和 State 资源
 lib/        下载的依赖，不提交
 roms/       本地游戏，不提交
 ```

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package firmware, user docs, provenance and licenses; never include ROMs."""
+"""Package firmware variants, resource images, user docs, provenance and licenses."""
 import argparse
 import hashlib
 import json
@@ -30,16 +30,24 @@ def main():
         shutil.copy2(args.build / name, dest / name)
         data = (dest / name).read_bytes()
         info["artifacts"][name] = {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+    info["resource_images"] = json.loads((args.build / "resources/resource-images.json").read_text())
+    for name in ("tufty-nes-with-romfs.uf2", "tufty-nes-with-filesystem.uf2",
+                 "rom.bin", "system.bin", "state.bin", "resource-images.json"):
+        shutil.copy2(args.build / "resources" / name, dest / name)
+        data = (dest / name).read_bytes()
+        info["artifacts"][name] = {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
     for name in ("README.md", "THIRD_PARTY.md", "LICENSE", "deps.lock.json"):
         shutil.copy2(PROJECT / name, dest / name)
+    (dest / "resources").mkdir(exist_ok=True)
+    shutil.copy2(PROJECT / "resources/README.md", dest / "resources/README.md")
     docs = dest / "docs"
     docs.mkdir(exist_ok=True)
     for source in sorted((PROJECT / "docs").glob("*.md")):
         shutil.copy2(source, docs / source.name)
     examples = dest / "examples"
-    examples.mkdir(exist_ok=True)
-    for source in sorted((PROJECT / "examples").glob("*.json")):
-        shutil.copy2(source, examples / source.name)
+    (examples / "gamepad.json").unlink(missing_ok=True)
+    if examples.is_dir() and not any(examples.iterdir()):
+        examples.rmdir()
     licenses = dest / "licenses"
     licenses.mkdir(exist_ok=True)
     for source in (PROJECT / "licenses").iterdir():
